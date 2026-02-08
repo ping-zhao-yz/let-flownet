@@ -1,29 +1,29 @@
-# README #
+# let_flownet
 
-This README would normally document whatever steps are necessary to get your application up and running.
+## Setup
+This project uses `uv` for dependency management and package building.
 
-### What is this repository for? ###
+### 1. Install uv
+If you haven't installed `uv` yet:
+```bash
+pip install uv
+```
 
-* Quick summary
-* Version
-* [Learn Markdown](https://bitbucket.org/tutorials/markdowndemo)
+### 2. Install Dependencies
+Run the following command to create a virtual environment and install all required packages (including compiling the `Forward_Warp` CUDA extension):
+```bash
+uv sync
+```
 
-### How do I get set up? ###
+### 3. Activate Environment
+```bash
+source .venv/bin/activate
+```
 
-* Summary of set up
-* Configuration
-* Dependencies
-* Database configuration
-* How to run tests
-* Deployment instructions
+## Running Tests
 
-### Contribution guidelines ###
+To verify that the environment is set up correctly and the custom CUDA modules are compiled:
 
-* Writing tests
-* Code review
-* Other guidelines
-
-### Who do I talk to? ###
-
-* Repo owner or admin
-* Other community or team contact
+```bash
+python -c "import torch; import Forward_Warp; print('Forward_Warp imported successfully')"
+```

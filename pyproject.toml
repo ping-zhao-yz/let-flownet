@@ -1,7 +1,7 @@
 [project]
-name = "spiket_flownet"
+name = "let_flownet"
 version = "0.1.0"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "torch==2.9.1",
     "torchvision==0.24.1",
@@ -21,6 +21,9 @@ dependencies = [
 
 [tool.uv.sources]
 Forward_Warp = { path = "./models/warp", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
 
 [build-system]
 requires = ["hatchling",]

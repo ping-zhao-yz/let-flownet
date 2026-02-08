@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: Forward_Warp
+Version: 0.0.1
+Summary: Forward Warp Pytorch Version
+Author-email: lizhihao6 <lizhihao6@outlook.com>
+License-File: LICENSE
+Requires-Dist: torch
+Requires-Dist: numpy
+Dynamic: license-file

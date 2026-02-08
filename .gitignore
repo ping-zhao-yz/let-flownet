@@ -25,6 +25,7 @@ spikeflownet/
 __pycache__/
 .pytest_cache/
 
+*_output/
 
 # Maven
 target/
