@@ -1,0 +1,27 @@
+[project]
+name = "spiket_flownet"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "torch==2.9.1",
+    "torchvision==0.24.1",
+    "opencv-python==4.8.0.74",
+    "tensorboardX==2.2",
+    "einops==0.6.1",
+    "numpy==1.26.4",
+    "h5py==3.15.1",
+    "protobuf==3.20.0",
+    "pybind11==3.0.1",
+    "six==1.17.0",
+    "pip==25.3",
+    "uv==0.9.15",
+    # custom package defined in models/warp/pyproject.toml
+    "Forward_Warp",
+]
+
+[tool.uv.sources]
+Forward_Warp = { path = "./models/warp", editable = true }
+
+[build-system]
+requires = ["hatchling",]
+build-backend = "hatchling.build"

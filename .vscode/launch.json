@@ -1,0 +1,25 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            // "args": ["--pretrained=pretrained/evt-countdiv_snntrans_dt4_bat8_lr5e-5.checkpoint.pth.tar"],
+            // "args": ["--evaluate", "--pretrained=pretrained/evt-countdiv_snntrans_dt4_bat8_lr5e-5.checkpoint.pth.tar"],
+        }
+    ]
+}

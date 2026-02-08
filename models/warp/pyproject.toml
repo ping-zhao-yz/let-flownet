@@ -1,0 +1,16 @@
+[build-system]
+# We must include 'torch' here so it is available during the build process
+requires = ["setuptools", "wheel", "torch"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Forward_Warp"
+version = "0.0.1"
+description = "Forward Warp Pytorch Version"
+authors = [
+    {name = "lizhihao6", email = "lizhihao6@outlook.com"}
+]
+dependencies = [
+    "torch", 
+    "numpy"
+]
