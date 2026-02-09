@@ -53,6 +53,7 @@ args = parser.parse_args()
 
 # Initializations
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"=> using device '{device}'")
 
 image_resize = 256
 sp_threshold = 0.75
