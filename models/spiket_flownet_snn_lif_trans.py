@@ -60,19 +60,26 @@ class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
         self.trans_decoder0 = transformer_decoder(d_model=512, nhead=8, num_decoder_layers=num_dec_layers,
                                                 dim_feedforward=1024, activation='relu', dropout=0.1)
         
-        self.split1 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=2, stride=2, padding=0)
+        self.split1 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, stride=2, padding=1)
         self.trans_encoder1 = transformer_encoder(d_model=512, nhead=8, num_encoder_layers=num_enc_layers, 
                                                 dim_feedforward=1024, activation='relu', dropout=0.1)
         self.trans_decoder1 = transformer_decoder(d_model=512, nhead=8, num_decoder_layers=num_dec_layers,
                                                 dim_feedforward=1024, activation='relu', dropout=0.1)
         
-        self.split2 = nn.Conv2d(in_channels=128, out_channels=512, kernel_size=4, stride=4, padding=0)
+        self.split2 = nn.Sequential(
+            ConvLayer(in_channels=128, out_channels=256, kernel_size=3, stride=2, padding=1, norm=norm),
+            nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, stride=2, padding=1)
+        )
         self.trans_encoder2 = transformer_encoder(d_model=512, nhead=8, num_encoder_layers=num_enc_layers, 
                                                 dim_feedforward=1024, activation='relu', dropout=0.1)
         self.trans_decoder2 = transformer_decoder(d_model=512, nhead=8, num_decoder_layers=num_dec_layers,
                                                 dim_feedforward=1024, activation='relu', dropout=0.1)
         
-        self.split3 = nn.Conv2d(in_channels=64, out_channels=512, kernel_size=8, stride=8, padding=0)
+        self.split3 = nn.Sequential(
+            ConvLayer(in_channels=64, out_channels=128, kernel_size=3, stride=2, padding=1, norm=norm),
+            ConvLayer(in_channels=128, out_channels=256, kernel_size=3, stride=2, padding=1, norm=norm),
+            nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, stride=2, padding=1)
+        )
         self.trans_encoder3 = transformer_encoder(d_model=512, nhead=8, num_encoder_layers=num_enc_layers, 
                                                 dim_feedforward=1024, activation='relu', dropout=0.1)
         self.trans_decoder3 = transformer_decoder(d_model=512, nhead=8, num_decoder_layers=num_dec_layers,
