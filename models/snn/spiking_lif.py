@@ -1,8 +1,5 @@
 import torch
-import torch.nn as nn
 import numpy as np
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 beta = 5
 
 class SurrogateGradSpike(torch.autograd.Function):
@@ -12,7 +9,7 @@ class SurrogateGradSpike(torch.autograd.Function):
         ctx.save_for_backward(input)
         out = torch.zeros_like(input)
         out[input > 0] = 1.0
-        return out.type(torch.FloatTensor).to(device)
+        return out
 
     @staticmethod
     def backward(ctx, grad_output):

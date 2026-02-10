@@ -2,13 +2,11 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 class SpikingNN(torch.autograd.Function):
     @staticmethod
     def forward(self, input):
         self.save_for_backward(input)
-        return input.gt(1e-5).type(torch.FloatTensor).to(device)
+        return input.gt(1e-5).float()
 
     @staticmethod
     def backward(self, grad_output):

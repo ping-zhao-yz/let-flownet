@@ -1,12 +1,9 @@
 import torch
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
 class Forward_Warp_Python:
     @staticmethod
     def forward(im0, flow, interpolation_mode):
-        im1 = torch.zeros_like(im0).to(device)
+        im1 = torch.zeros_like(im0)
         B = im0.shape[0]
         H = im0.shape[2]
         W = im0.shape[3]
@@ -47,8 +44,8 @@ class Forward_Warp_Python:
         C = grad_output.shape[1]
         H = grad_output.shape[2]
         W = grad_output.shape[3]
-        im0_grad = torch.zeros_like(grad_output).to(device)
-        flow_grad = torch.empty([B, H, W, 2]).to(device)
+        im0_grad = torch.zeros_like(grad_output)
+        flow_grad = torch.empty([B, H, W, 2], device=grad_output.device)
         if interpolation_mode == 0:
             for b in range(B):
                 for h in range(H):
@@ -77,8 +74,8 @@ class Forward_Warp_Python:
                             im0_grad[b, :, h, w] += ne_k*ne_grad
                             im0_grad[b, :, h, w] += sw_k*sw_grad
                             im0_grad[b, :, h, w] += se_k*se_grad
-                            flow_grad_x = torch.zeros(C).to(device)
-                            flow_grad_y = torch.zeros(C).to(device)
+                            flow_grad_x = torch.zeros(C, device=grad_output.device)
+                            flow_grad_y = torch.zeros(C, device=grad_output.device)
                             flow_grad_x -= (y_c-y)*p*nw_grad
                             flow_grad_y -= (x_c-x)*p*nw_grad
                             flow_grad_x += (y_c-y)*p*ne_grad

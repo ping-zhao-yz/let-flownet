@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import math
+import torch.nn.functional as F
 from torch.nn.init import constant_
 from einops import rearrange
 
@@ -77,25 +78,25 @@ class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
         self.trans_decoder3 = transformer_decoder(d_model=512, nhead=8, num_decoder_layers=num_dec_layers,
                                                 dim_feedforward=1024, activation='relu', dropout=0.1)
 
-        self.deconv = [
-            deconv(self.batchNorm, 512, 128).to(self.device),
-            deconv(self.batchNorm, 512, 128).to(self.device),
-            deconv(self.batchNorm, 320, 128).to(self.device)
-        ]
+        self.deconv = nn.ModuleList([
+            deconv(self.batchNorm, 512, 128),
+            deconv(self.batchNorm, 1024, 128),
+            deconv(self.batchNorm, 832, 128)
+        ])
         
         self.UpsampleConv = nn.ModuleList([
             UpsampleConvLayer(in_channels=512, out_channels=256, kernel_size=5, stride=1, padding=2, norm=norm),
-            UpsampleConvLayer(in_channels=512, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm),
-            UpsampleConvLayer(in_channels=320, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm),
-            UpsampleConvLayer(in_channels=256, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm)
+            UpsampleConvLayer(in_channels=1024, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm),
+            UpsampleConvLayer(in_channels=832, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm),
+            UpsampleConvLayer(in_channels=768, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm)
         ])
 
-        self.predict_flow = [
-            predict_flow(self.batchNorm, 256, 128).to(self.device),
-            predict_flow(self.batchNorm, 128, 64).to(self.device),
-            predict_flow(self.batchNorm, 128, 64).to(self.device),
-            predict_flow(self.batchNorm, 128, 2).to(self.device)
-        ]
+        self.predict_flow = nn.ModuleList([
+            predict_flow(self.batchNorm, 256, 128),
+            predict_flow(self.batchNorm, 128, 64),
+            predict_flow(self.batchNorm, 128, 64),
+            predict_flow(self.batchNorm, 128, 2)
+        ])
 
 
     def forward(self, input, image_resize, sp_threshold):
@@ -105,25 +106,25 @@ class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
         alpha = self.alpha
 
         mem_1 = torch.zeros(input.size(0), 64, int(
-            image_resize/2), int(image_resize/2)).to(self.device)
+            image_resize/2), int(image_resize/2)).to(input.device)
         mem_2 = torch.zeros(input.size(0), 128, int(
-            image_resize/4), int(image_resize/4)).to(self.device)
+            image_resize/4), int(image_resize/4)).to(input.device)
         mem_3 = torch.zeros(input.size(0), 256, int(
-            image_resize/8), int(image_resize/8)).to(self.device)
+            image_resize/8), int(image_resize/8)).to(input.device)
         mem_4 = torch.zeros(input.size(0), 512, int(
-            image_resize/16), int(image_resize/16)).to(self.device)
+            image_resize/16), int(image_resize/16)).to(input.device)
 
         mem_1_total = torch.zeros(input.size(0), 64, int(
-            image_resize/2), int(image_resize/2)).to(self.device)
+            image_resize/2), int(image_resize/2)).to(input.device)
         mem_2_total = torch.zeros(input.size(0), 128, int(
-            image_resize/4), int(image_resize/4)).to(self.device)
+            image_resize/4), int(image_resize/4)).to(input.device)
         mem_3_total = torch.zeros(input.size(0), 256, int(
-            image_resize/8), int(image_resize/8)).to(self.device)
+            image_resize/8), int(image_resize/8)).to(input.device)
         mem_4_total = torch.zeros(input.size(0), 512, int(
-            image_resize/16), int(image_resize/16)).to(self.device)
+            image_resize/16), int(image_resize/16)).to(input.device)
 
         for i in range(input.size(4)):
-            input11 = input[:, :, :, :, i].to(self.device)
+            input11 = input[:, :, :, :, i].to(input.device)
 
             current_1 = self.conv_s1(input11)
             mem_1 = alpha*mem_1 + current_1
@@ -190,34 +191,38 @@ class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
         hs3 = self.trans_encoder3(src=token3.transpose(0, 1), pos=pos3.transpose(0, 1))
         hc3 = self.trans_decoder3(tgt=hs3, memory=hs2)
 
-        hs_trans = (hs0 + hs1 + hs2 + hs3 + hc0 + hc1 + hc2 + hc3) / 8
-        hs = rearrange(hs_trans, '(h w) n c -> n c h w', h=H//16)
-
-        # TODO: 999 - directly skip connect each transformer decoder output with the encoder output, instead of aggregating all the decoder output which loses details
-        # hc_blocks = []
-        # hc_blocks.append(hc0)
-        # hc_blocks.append(hc1)
-        # hc_blocks.append(hc2)
-        # hc_blocks.append(hc3)
+        # Hierarchical decoding with skip connections from transformer decoders
+        # to address the feature aggregation bottleneck.
+        hc0_img = rearrange(hc0, '(h w) n c -> n c h w', h=H//16, w=W//16)
+        hc1_img = rearrange(hc1, '(h w) n c -> n c h w', h=H//16, w=W//16)
+        hc2_img = rearrange(hc2, '(h w) n c -> n c h w', h=H//16, w=W//16)
+        hc3_img = rearrange(hc3, '(h w) n c -> n c h w', h=H//16, w=W//16)
 
         # Decoder & Prediction: Multi-Level Upsampler (MLU)
 
         # Small -> Big
-        input0 = self.UpsampleConv[0](hs)
+        # Start with the smallest scale transformer output
+        input0 = self.UpsampleConv[0](hc0_img)
         flow0 = self.predict_flow[0](input0)
-        hs_up = self.deconv[0](hs)
+        hs_up = self.deconv[0](hc0_img)
 
-        concat1 = torch.cat((flow0, blocks[2], hs_up), 1)
+        # Upsample and inject next scale transformer output
+        hc1_up = F.interpolate(hc1_img, scale_factor=2, mode='bilinear', align_corners=False)
+        concat1 = torch.cat((flow0, blocks[2], hs_up, hc1_up), 1)
         input1 = self.UpsampleConv[1](concat1)
         flow1 = self.predict_flow[1](input1)
         concat1_up = self.deconv[1](concat1)
 
-        concat2 = torch.cat((flow1, blocks[1], concat1_up), 1)
+        # Upsample and inject next scale transformer output
+        hc2_up = F.interpolate(hc2_img, scale_factor=4, mode='bilinear', align_corners=False)
+        concat2 = torch.cat((flow1, blocks[1], concat1_up, hc2_up), 1)
         input2 = self.UpsampleConv[2](concat2)
         flow2 = self.predict_flow[2](input2)
         concat2_up = self.deconv[2](concat2)
 
-        concat3 = torch.cat((flow2, blocks[0], concat2_up), 1)
+        # Upsample and inject final scale transformer output
+        hc3_up = F.interpolate(hc3_img, scale_factor=8, mode='bilinear', align_corners=False)
+        concat3 = torch.cat((flow2, blocks[0], concat2_up, hc3_up), 1)
         input3 = self.UpsampleConv[3](concat3)
         flow3 = self.predict_flow[3](input3)
 

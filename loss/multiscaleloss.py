@@ -2,10 +2,6 @@ import torch
 import numpy as np
 import cv2
 
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
 def smooth_loss_downsample(flow_predictions):
     def gradient(pred):
         D_dy = pred[:, :, 1:] - pred[:, :, :-1]

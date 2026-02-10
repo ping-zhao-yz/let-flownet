@@ -20,16 +20,15 @@ def charbonnier_loss(delta, alpha=0.45, epsilon=1e-3):
 warp an image/tensor (im2) back to im1, according to the optical flow
 x: [B, C, H, W] (im2), flo: [B, 2, H, W] flow
 """
-def backward_warp(x, flo, device):
+def backward_warp(x, flo):
     B, C, H, W = x.size()
     # mesh grid
-    xx = torch.arange(0, W).view(1, -1).repeat(H, 1)
-    yy = torch.arange(0, H).view(-1, 1).repeat(1, W)
+    xx = torch.arange(0, W, device=x.device).view(1, -1).repeat(H, 1)
+    yy = torch.arange(0, H, device=x.device).view(-1, 1).repeat(1, W)
     xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
     yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
     grid = torch.cat((xx, yy), 1).float()
 
-    grid = grid.to(device)
     vgrid = grid + flo
 
     # scale grid to [-1,1]
@@ -38,7 +37,7 @@ def backward_warp(x, flo, device):
 
     vgrid = vgrid.permute(0, 2, 3, 1)
     output = nn.functional.grid_sample(x, vgrid, align_corners=False)
-    mask = torch.ones(x.size()).to(device)
+    mask = torch.ones_like(x)
     mask = nn.functional.grid_sample(mask, vgrid, align_corners=False)
 
     mask[mask < 0.9999] = 0
@@ -83,8 +82,11 @@ def photometric_loss_backward(prev_images_temp, next_images_temp, event_images, 
                 )
             )
 
-        next_images_warped = backward_warp(next_images_resize.to(device), flow.to(device), device)
-        error_temp_backward = next_images_warped - prev_images_resize.to(device)
+        prev_images_gpu = prev_images_resize.to(device)
+        next_images_gpu = next_images_resize.to(device)
+
+        next_images_warped = backward_warp(next_images_gpu, flow)
+        error_temp_backward = next_images_warped - prev_images_gpu
         photometric_loss_backward = charbonnier_loss(error_temp_backward)
 
         if print_details:
@@ -133,8 +135,11 @@ def photometric_loss_backward_single(prev_images_temp, next_images_temp, event_i
             )
         )
 
-    next_images_warped = backward_warp(next_images_resize.to(device), flow.to(device), device)
-    error_temp_backward = next_images_warped - prev_images_resize.to(device)
+    prev_images_gpu = prev_images_resize.to(device)
+    next_images_gpu = next_images_resize.to(device)
+
+    next_images_warped = backward_warp(next_images_gpu, flow)
+    error_temp_backward = next_images_warped - prev_images_gpu
     photometric_loss_backward = charbonnier_loss(error_temp_backward)
 
     total_photometric_loss = photometric_loss_backward
