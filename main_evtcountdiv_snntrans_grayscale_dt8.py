@@ -13,7 +13,7 @@ from datetime import datetime
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from util.loss_util import AverageMeter
-from util.loss_util import flow2rgb, flow_viz_np, save_checkpoint
+from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
 from datasets.evt_count_divided.dataset_dtx import DatasetTest, DatasetTrain
 from models import spiket_flownet_snn_lif_trans
@@ -49,15 +49,18 @@ parser.add_argument('--mixed_precision', action='store_true',
 
 parser.add_argument('--dropout', type=float, default=0.0)
 
+parser.add_argument('--dt', type=int, default=8, help='time interval (1, 4, or 8)')
+parser.add_argument('--sp_threshold', type=float, default=0.5, help='spike threshold')
+
 args = parser.parse_args()
 
 # Initializations
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"=> using device '{device}'")
 
 image_resize = 256
-sp_threshold = 0.5
+sp_threshold = args.sp_threshold
 
-dt = 8
 div_flow = 1
 
 dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
@@ -332,7 +335,7 @@ def main():
         output_writers.append(SummaryWriter(
             os.path.join(save_path, 'test', str(i))))
 
-    Test_dataset = DatasetTest(dt, test_src_file, test_dir)
+    Test_dataset = DatasetTest(args.dt, test_src_file, test_dir)
     test_loader = DataLoader(dataset=Test_dataset,
                              batch_size=1,
                              shuffle=False,
@@ -381,7 +384,7 @@ def main():
     ])
 
     Train_dataset = DatasetTrain(
-        dt, train_src_file, train_dir, transform=co_transform)
+        args.dt, train_src_file, train_dir, transform=co_transform)
     train_loader = DataLoader(dataset=Train_dataset,
                               batch_size=batch_size,
                               shuffle=True,

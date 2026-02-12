@@ -25,6 +25,7 @@ class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
 
         self.args = args
         self.device = device
+        dt = getattr(args, 'dt', 1)
 
         # SNN
         self.batchNorm = batchNorm
@@ -33,16 +34,19 @@ class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
         self.conv_s3 = conv_s(self.batchNorm, 128, 256, stride=2)
         self.conv_s4 = conv_s(self.batchNorm, 256, 512, stride=2)
 
+        # use 3 for dt1, and 2 for dt4 and larger (e.g. dt8)
+        numerator = 3.0 if dt == 1 else 2.0
+        
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
-                variance1 = math.sqrt(3.0 / n)  # use 3 for dt1 and 2 for dt4
+                variance1 = math.sqrt(numerator / n)
                 m.weight.data.normal_(0, variance1)
                 if m.bias is not None:
                     constant_(m.bias, 0)
 
-        self.dt = 10 * 1e-3
-        self.alpha = np.exp(-self.dt/self.args.tau)
+        time_step = dt * 10 * 1e-3
+        self.alpha = np.exp(-time_step/self.args.tau)
 
         # Transformers
         norm = self.args.norm
@@ -246,6 +250,10 @@ def spiket_flownet_snn_lif_trans(args, device, data=None):
     model = SpikeT_FlowNet_SNN_LIF_Trans(args, device)
 
     if data is not None:
-        model.load_state_dict(data['state_dict'])
+        try:
+            model.load_state_dict(data['state_dict'], strict=False)
+        except RuntimeError as e:
+            print(f"Error loading state dict: {e}")
+            print("Continuing without pre-trained weights.")
 
     return model
