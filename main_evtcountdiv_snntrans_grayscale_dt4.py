@@ -49,13 +49,16 @@ parser.add_argument('--mixed_precision', action='store_true',
 
 parser.add_argument('--dropout', type=float, default=0.0)
 
+parser.add_argument('--dt', type=int, default=4, help='time interval (1, 4, or 8)')
+parser.add_argument('--sp_threshold', type=float, default=0.5, help='spike threshold')
+
 args = parser.parse_args()
 
 # Initializations
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 image_resize = 256
-sp_threshold = 0.5
+sp_threshold = args.sp_threshold
 
 dt = 4
 div_flow = 1

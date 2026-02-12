@@ -25,6 +25,7 @@ class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
 
         self.args = args
         self.device = device
+        dt = getattr(args, 'dt', 1)
 
         # SNN
         self.batchNorm = batchNorm
@@ -36,13 +37,15 @@ class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
-                variance1 = math.sqrt(3.0 / n)  # use 3 for dt1 and 2 for dt4
+                # use 3 for dt1, and 2 for dt4 and larger (e.g. dt8)
+                numerator = 3.0 if dt == 1 else 2.0
+                variance1 = math.sqrt(numerator / n)
                 m.weight.data.normal_(0, variance1)
                 if m.bias is not None:
                     constant_(m.bias, 0)
 
-        self.dt = 10 * 1e-3
-        self.alpha = np.exp(-self.dt/self.args.tau)
+        time_step = dt * 10 * 1e-3
+        self.alpha = np.exp(-time_step/self.args.tau)
 
         # Transformers
         norm = self.args.norm
