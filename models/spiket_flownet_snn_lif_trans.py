@@ -34,11 +34,12 @@ class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
         self.conv_s3 = conv_s(self.batchNorm, 128, 256, stride=2)
         self.conv_s4 = conv_s(self.batchNorm, 256, 512, stride=2)
 
+        # use 3 for dt1, and 2 for dt4 and larger (e.g. dt8)
+        numerator = 3.0 if dt == 1 else 2.0
+        
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
-                # use 3 for dt1, and 2 for dt4 and larger (e.g. dt8)
-                numerator = 3.0 if dt == 1 else 2.0
                 variance1 = math.sqrt(numerator / n)
                 m.weight.data.normal_(0, variance1)
                 if m.bias is not None:
