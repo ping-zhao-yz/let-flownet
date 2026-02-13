@@ -250,6 +250,10 @@ def spiket_flownet_snn_lif_trans(args, device, data=None):
     model = SpikeT_FlowNet_SNN_LIF_Trans(args, device)
 
     if data is not None:
-        model.load_state_dict(data['state_dict'])
+        try:
+            model.load_state_dict(data['state_dict'], strict=False)
+        except RuntimeError as e:
+            print(f"Error loading state dict: {e}")
+            print("Continuing without pre-trained weights.")
 
     return model
