@@ -68,8 +68,7 @@ src_file_dir = '../../../dataset/Event/mvsec/original'
 
 save_dir = 'spiket_flownet_snn_lif_trans_dt1_output'
 
-# train_env = 'outdoor_day2'
-train_env = 'outdoor_day1'
+train_env = 'outdoor_day2'
 test_env = 'indoor_flying1'
 
 train_dir = os.path.join(dataset_dir, train_env)
@@ -83,7 +82,7 @@ arch = "spiket_flownet_snn_lif_trans"
 
 lr = 5e-5
 epochs = 100
-batch_size = 4
+batch_size = 8
 iter_g = 0
 
 
@@ -105,6 +104,9 @@ def train(train_loader, model, optimizer, epoch, train_writer):
         if torch.sum(former_inputs_on + former_inputs_off) > 0:
             print_details = i_batch % print_freq == 0
 
+            if i_batch == 0:
+                print(f"VERIFICATION: dt={args.dt}, N (event frames) = {former_inputs_on.shape[-1]}")
+
             event_data = initInputRepresentation(
                 former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off)
 
@@ -119,7 +121,7 @@ def train(train_loader, model, optimizer, epoch, train_writer):
             smoothness_loss = smooth_loss_upsample_single(flow_predictions)
 
             # total_loss
-            loss = photometric_loss + smoothness_loss
+            loss = photometric_loss + 10 * smoothness_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -249,7 +251,7 @@ def validate(test_loader, model, epoch, output_writers):
             xoff = (xsize - xcrop) // 2
             yoff = (ysize - ycrop) // 2
 
-            gt_flow = gt_flow[yoff: -yoff, xoff: -xoff, :]
+            gt_flow = gt_flow[yoff: -yoff if yoff > 0 else None, xoff: -xoff if xoff > 0 else None, :]
 
             AEE, percent_Outlier, n_points, AEE_sum_temp, AEE_gt, AEE_sum_temp_gt = flow_error_dense(
                 gt_flow, pred_flow, (torch.sum(torch.sum(torch.sum(event_data, dim=0), dim=0), dim=2)).cpu(), is_car=False)
@@ -311,7 +313,7 @@ def main():
 
     workers = 4
     best_EPE = -1
-    evaluate_interval = 3
+    evaluate_interval = 5
 
     val_fail_times_max = 5
     val_fail_times = 0
@@ -372,15 +374,13 @@ def main():
             param_groups, lr, momentum=0.9)
 
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer, [5, 10, 20, 30, 40, 50, 70, 90], gamma=0.7)
+        optimizer, [5, 10, 20, 30, 40, 50, 60, 70, 80, 90], gamma=0.7)
 
     co_transform = transforms.Compose([
         transforms.ToPILImage(),
         transforms.RandomHorizontalFlip(0.5),
         transforms.RandomVerticalFlip(0.5),
-        transforms.RandomRotation(30),
-        transforms.RandomResizedCrop((256, 256), scale=(
-            0.5, 1.0), ratio=(0.75, 1.3333333333333333), interpolation=2),
+        transforms.RandomCrop((256, 256)),
         transforms.ToTensor(),
     ])
 
