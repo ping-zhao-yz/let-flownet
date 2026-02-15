@@ -6,7 +6,7 @@ import numpy as np
 
 class PositionalEncodingSine(nn.Module):
 
-    def __init__(self, d_hid, n_position=8000):
+    def __init__(self, d_hid, n_position):
         super().__init__()
 
         # Not a parameter
@@ -27,9 +27,9 @@ class PositionalEncodingSine(nn.Module):
         return self.pos_table[:, :x.size(1)].clone().detach().to(x.device)
 
 
-def build_position_encoding(pos_type, d_model):
+def build_position_encoding(pos_type, d_model, n_position=8000):
     if pos_type == 'sine':
-        position_embedding = PositionalEncodingSine(d_model)
+        position_embedding = PositionalEncodingSine(d_model, n_position)
     else:
         raise ValueError(f'not support {pos_type}')
 

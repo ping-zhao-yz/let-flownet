@@ -15,12 +15,7 @@ dependencies = [
     "six==1.17.0",
     "pip==25.3",
     "uv==0.9.15",
-    # custom package defined in models/warp/pyproject.toml
-    "Forward_Warp",
 ]
-
-[tool.uv.sources]
-Forward_Warp = { path = "./models/warp", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
