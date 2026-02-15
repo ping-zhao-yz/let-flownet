@@ -49,12 +49,14 @@ def backward_warp(x, flo):
 """
 Multi-scale photometric loss, as defined in equation (3) of the paper.
 """
-def photometric_loss_backward(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
+def calculate_photometric_loss(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
     prev_images = np.array(prev_images_temp)
     next_images = np.array(next_images_temp)
 
     total_photometric_loss = 0.0
     loss_weight_sum = 0.0
+
+    print_photometric_loss = False
 
     for i in range(len(output)):
         flow = output[i]
@@ -87,17 +89,17 @@ def photometric_loss_backward(prev_images_temp, next_images_temp, event_images, 
 
         next_images_warped = backward_warp(next_images_gpu, flow)
         error_temp_backward = next_images_warped - prev_images_gpu
-        photometric_loss_backward = charbonnier_loss(error_temp_backward)
+        photometric_loss = charbonnier_loss(error_temp_backward)
 
-        if print_details:
-            print(f'photometric_loss_backward: {photometric_loss_backward}')
+        if print_details & print_photometric_loss:
+            print(f'photometric_loss: {photometric_loss}')
 
-        total_photometric_loss += weights[len(weights) - i - 1] * photometric_loss_backward
+        total_photometric_loss += weights[len(weights) - i - 1] * photometric_loss
         loss_weight_sum += 1.
 
     total_photometric_loss = total_photometric_loss / loss_weight_sum
 
-    if print_details:
+    if print_details & print_photometric_loss:
         print(f'total_photometric_loss: {total_photometric_loss}')
 
     return total_photometric_loss

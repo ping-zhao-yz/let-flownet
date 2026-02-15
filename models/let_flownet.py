@@ -14,14 +14,14 @@ from .trans.position_encoding import build_position_encoding
 from .model_util import ConvLayer, UpsampleConvLayer, conv_s, deconv, predict_flow
 
 
-__all__ = ['spiket_flownet_snn_lif_trans']
+__all__ = ['let_flownet']
 
 
-class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
+class LET_FlowNet(BaseModel):
     expansion = 1
 
     def __init__(self, args, device, batchNorm=True):
-        super(SpikeT_FlowNet_SNN_LIF_Trans, self).__init__()
+        super(LET_FlowNet, self).__init__()
 
         self.args = args
         self.device = device
@@ -246,8 +246,8 @@ class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
         return [param for name, param in self.named_parameters() if 'bias' in name]
 
 
-def spiket_flownet_snn_lif_trans(args, device, data=None):
-    model = SpikeT_FlowNet_SNN_LIF_Trans(args, device)
+def let_flownet(args, device, data=None):
+    model = LET_FlowNet(args, device)
 
     if data is not None:
         try:

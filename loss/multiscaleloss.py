@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import cv2
 
-def smooth_loss(flow_predictions):
+def calculate_smooth_loss(flow_predictions):
     def gradient(pred):
         D_dy = pred[:, :, 1:] - pred[:, :, :-1]
         D_dx = pred[:, :, :, 1:] - pred[:, :, :, :-1]
