@@ -313,7 +313,7 @@ def main():
 
     workers = 4
     best_EPE = -1
-    evaluate_interval = 3
+    evaluate_interval = 5
 
     val_fail_times_max = 5
     val_fail_times = 0
