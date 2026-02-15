@@ -92,59 +92,12 @@ def photometric_loss_backward(prev_images_temp, next_images_temp, event_images, 
         if print_details:
             print(f'photometric_loss_backward: {photometric_loss_backward}')
 
-        total_photometric_loss += weights[len(weights) - i -1] * photometric_loss_backward
+        total_photometric_loss += weights[len(weights) - i - 1] * photometric_loss_backward
         loss_weight_sum += 1.
 
     total_photometric_loss = total_photometric_loss / loss_weight_sum
 
     if print_details:
-        print('total_photometric_loss: {0}'.format(total_photometric_loss))
-
-    return total_photometric_loss
-
-
-"""
-Single-scale photometric loss, as defined in equation (3) of the paper.
-"""
-def photometric_loss_backward_single(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
-    prev_images = np.array(prev_images_temp)
-    next_images = np.array(next_images_temp)
-
-    flow = output
-
-    m_batch = flow.size(0)
-    height = flow.size(2)
-    width = flow.size(3)
-
-    prev_images_resize = torch.zeros(m_batch, 1, height, width)
-    next_images_resize = torch.zeros(m_batch, 1, height, width)
-
-    for b in range(m_batch):
-        prev_images_resize[b, 0, :, :] = torch.from_numpy(
-            cv2.resize(
-                prev_images[b, :, :], 
-                (height, width), 
-                interpolation=cv2.INTER_LINEAR
-            )
-        )
-        next_images_resize[b, 0, :, :] = torch.from_numpy(
-            cv2.resize(
-                next_images[b, :, :], 
-                (height, width), 
-                interpolation=cv2.INTER_LINEAR
-            )
-        )
-
-    prev_images_gpu = prev_images_resize.to(device)
-    next_images_gpu = next_images_resize.to(device)
-
-    next_images_warped = backward_warp(next_images_gpu, flow)
-    error_temp_backward = next_images_warped - prev_images_gpu
-    photometric_loss_backward = charbonnier_loss(error_temp_backward)
-
-    total_photometric_loss = photometric_loss_backward
-
-    if print_details:
-        print('total_photometric_loss: {0}'.format(total_photometric_loss))
+        print(f'total_photometric_loss: {total_photometric_loss}')
 
     return total_photometric_loss

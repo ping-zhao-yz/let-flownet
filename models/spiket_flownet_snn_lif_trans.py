@@ -90,23 +90,23 @@ class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
                                                 dim_feedforward=1024, activation='relu', dropout=0.1)
 
         self.deconv = nn.ModuleList([
-            deconv(self.batchNorm, 512, 128),
-            deconv(self.batchNorm, 1024, 128),
-            deconv(self.batchNorm, 832, 128)
+            deconv(self.batchNorm, 512, 64),
+            deconv(self.batchNorm, 834, 64),
+            deconv(self.batchNorm, 706, 64)
         ])
         
         self.UpsampleConv = nn.ModuleList([
-            UpsampleConvLayer(in_channels=512, out_channels=256, kernel_size=5, stride=1, padding=2, norm=norm),
-            UpsampleConvLayer(in_channels=1024, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm),
-            UpsampleConvLayer(in_channels=832, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm),
-            UpsampleConvLayer(in_channels=768, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm)
+            UpsampleConvLayer(in_channels=512, out_channels=64, kernel_size=5, stride=1, padding=2, norm=norm),
+            UpsampleConvLayer(in_channels=834, out_channels=64, kernel_size=5, stride=1, padding=2, norm=norm),
+            UpsampleConvLayer(in_channels=706, out_channels=64, kernel_size=5, stride=1, padding=2, norm=norm),
+            UpsampleConvLayer(in_channels=642, out_channels=64, kernel_size=5, stride=1, padding=2, norm=norm)
         ])
 
         self.predict_flow = nn.ModuleList([
-            predict_flow(self.batchNorm, 256, 128),
-            predict_flow(self.batchNorm, 128, 64),
-            predict_flow(self.batchNorm, 128, 64),
-            predict_flow(self.batchNorm, 128, 2)
+            predict_flow(self.batchNorm, 64, 2),
+            predict_flow(self.batchNorm, 64, 2),
+            predict_flow(self.batchNorm, 64, 2),
+            predict_flow(self.batchNorm, 64, 2)
         ])
 
 
@@ -237,7 +237,7 @@ class SpikeT_FlowNet_SNN_LIF_Trans(BaseModel):
         input3 = self.UpsampleConv[3](concat3)
         flow3 = self.predict_flow[3](input3)
 
-        return flow3
+        return [flow0, flow1, flow2, flow3]
 
     def weight_parameters(self):
         return [param for name, param in self.named_parameters() if 'weight' in name]

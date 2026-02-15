@@ -17,8 +17,8 @@ from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
 from datasets.evt_count_divided.dataset_dtx import DatasetTest, DatasetTrain
 from models import spiket_flownet_snn_lif_trans
-from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss_upsample_single
-from loss.photometric_loss_backward import photometric_loss_backward_single
+from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss
+from loss.photometric_loss_backward import photometric_loss_backward
 
 
 parser = argparse.ArgumentParser(description='spiket_flownet_snn_lif_trans training on several datasets',
@@ -114,11 +114,11 @@ def train(train_loader, model, optimizer, epoch, train_writer):
             flow_predictions = model(event_data, image_resize, sp_threshold)
 
             # Photometric loss.
-            photometric_loss = photometric_loss_backward_single(former_gray[:, 0, :, :], latter_gray[:, 0, :, :], torch.sum(
+            photometric_loss = photometric_loss_backward(former_gray[:, 0, :, :], latter_gray[:, 0, :, :], torch.sum(
                 event_data, 4), flow_predictions, device, print_details, weights=multiscale_weights)
 
             # Smoothness loss.
-            smoothness_loss = smooth_loss_upsample_single(flow_predictions)
+            smoothness_loss = smooth_loss(flow_predictions)
 
             # total_loss
             loss = photometric_loss + 10 * smoothness_loss
@@ -173,6 +173,7 @@ def validate(test_loader, model, epoch, output_writers):
 
             # compute output
             output = model(event_data, image_resize, sp_threshold)
+            output = output[-1] if isinstance(output, list) else output
             output_temp = output.cpu()
 
             pred_flow = np.zeros((image_resize, image_resize, 2), dtype=np.float32)

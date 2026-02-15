@@ -17,36 +17,6 @@ def charbonnier_loss(delta, alpha=0.45, epsilon=1e-3):
 
 
 """
-warp an image/tensor (im2) back to im1, according to the optical flow
-x: [B, C, H, W] (im2), flo: [B, 2, H, W] flow
-"""
-def backward_warp(x, flo):
-    B, C, H, W = x.size()
-    # mesh grid
-    xx = torch.arange(0, W, device=x.device).view(1, -1).repeat(H, 1)
-    yy = torch.arange(0, H, device=x.device).view(-1, 1).repeat(1, W)
-    xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
-    yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
-    grid = torch.cat((xx, yy), 1).float()
-
-    vgrid = grid + flo
-
-    # scale grid to [-1,1]
-    vgrid[:, 0, :, :] = 2.0 * vgrid[:, 0, :, :].clone() / max(W - 1, 1) - 1.0
-    vgrid[:, 1, :, :] = 2.0 * vgrid[:, 1, :, :].clone() / max(H - 1, 1) - 1.0
-
-    vgrid = vgrid.permute(0, 2, 3, 1)
-    output = nn.functional.grid_sample(x, vgrid, align_corners=False)
-    mask = torch.ones_like(x)
-    mask = nn.functional.grid_sample(mask, vgrid, align_corners=False)
-
-    mask[mask < 0.9999] = 0
-    mask[mask > 0] = 1
-
-    return output * mask
-
-
-"""
 Multi-scale photometric loss, as defined in equation (3) of the paper.
 """
 def photometric_loss_forward(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
@@ -54,7 +24,7 @@ def photometric_loss_forward(prev_images_temp, next_images_temp, event_images, o
     next_images = np.array(next_images_temp)
 
     total_photometric_loss = 0.0
-    print_cost_details = True
+    loss_weight_sum = 0.0
 
     for i in range(len(output)):
         flow = output[i]
@@ -89,14 +59,15 @@ def photometric_loss_forward(prev_images_temp, next_images_temp, event_images, o
         error_temp_forward = prev_images_warped - next_images_gpu
         photometric_loss_forward = charbonnier_loss(error_temp_forward)
 
-        photometric_loss_scale = torch.log(photometric_loss_forward)
+        if print_details:
+            print(f'photometric_loss_forward: {photometric_loss_forward}')
 
-        if print_details & print_cost_details:
-            print(f'photometric_loss_forward: {photometric_loss_forward}, photometric_loss_scale: {photometric_loss_scale}')
+        total_photometric_loss += weights[len(weights) - i - 1] * photometric_loss_forward
+        loss_weight_sum += 1.
 
-        total_photometric_loss += weights[len(weights) - i - 1] * photometric_loss_scale
+    total_photometric_loss = total_photometric_loss / loss_weight_sum
 
-    if print_details & print_cost_details:
-        print('total_photometric_loss: {0}'.format(total_photometric_loss))
+    if print_details:
+        print(f'total_photometric_loss: {total_photometric_loss}')
 
     return total_photometric_loss
