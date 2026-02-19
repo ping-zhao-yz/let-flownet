@@ -63,9 +63,15 @@ class TransformerEncoderLayer(nn.Module):
         return tensor if pos is None else tensor + pos
 
     def forward(self, src):
-        # self attention
+        # self attention with Flash Attention (PyTorch 2.0+)
         q = k = v = self.norm1(src)
-        src1 = self.self_attn(q, k, v)[0]
+
+        # This automatically uses Flash Attention or memory-efficient kernels
+        src1 = F.scaled_dot_product_attention(
+            q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1),
+            dropout_p=self.attn_dropout.p if self.training else 0.0
+        ).transpose(0, 1)
+
         src2 = src + self.attn_dropout(src1)
 
         # FFN

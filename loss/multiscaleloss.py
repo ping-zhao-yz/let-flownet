@@ -14,7 +14,7 @@ def calculate_smooth_loss(flow_predictions):
     loss = 0
     weights = [1, 2, 4, 8]
 
-    for flow in flow_predictions:
+    for i, flow in enumerate(flow_predictions):
         dx, dy = gradient(flow)
         dx2, dxdy = gradient(dx)
         dydx, dy2 = gradient(dy)

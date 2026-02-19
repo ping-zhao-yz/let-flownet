@@ -13,6 +13,7 @@ from .trans.transformer_decoder import transformer_decoder
 from .trans.position_encoding import build_position_encoding
 from .model_util import ConvLayer, UpsampleConvLayer, conv_s, deconv, predict_flow
 
+from torch.utils.checkpoint import checkpoint
 
 __all__ = ['let_flownet']
 
@@ -164,17 +165,20 @@ class LET_FlowNet(BaseModel):
         hs1 = self.trans_encoder1(src=t1.transpose(0, 1), pos=p1.transpose(0, 1))
         hc1 = self.trans_decoder1(tgt=hs1, memory=hs0) # Chained memory
 
-        # Scale 2: 64x64 tokens (mem_2)
+        # Scale 2: 64x64 tokens (mem_2) - Implement Checkpointing
         t2 = self.split2(blocks[-3]).flatten(2).transpose(1, 2)
         p2 = self.position_embedding(t2)
-        hs2 = self.trans_encoder2(src=t2.transpose(0, 1), pos=p2.transpose(0, 1))
-        hc2 = self.trans_decoder2(tgt=hs2, memory=hs1) # Chained memory
 
-        # Scale 3: 128x128 tokens (mem_1)
+        # Wrap encoder and decoder separately to maximize memory savings
+        hs2 = checkpoint(self.trans_encoder2, t2.transpose(0, 1), p2.transpose(0, 1), use_reentrant=False)
+        hc2 = checkpoint(self.trans_decoder2, hs2, hs1, use_reentrant=False)
+
+        # Scale 3: 128x128 tokens (mem_1) - Implement Checkpointing
         t3 = self.split3(blocks[-4]).flatten(2).transpose(1, 2)
         p3 = self.position_embedding(t3)
-        hs3 = self.trans_encoder3(src=t3.transpose(0, 1), pos=p3.transpose(0, 1))
-        hc3 = self.trans_decoder3(tgt=hs3, memory=hs2) # Chained memory
+
+        hs3 = checkpoint(self.trans_encoder3, t3.transpose(0, 1), p3.transpose(0, 1), use_reentrant=False)
+        hc3 = checkpoint(self.trans_decoder3, hs3, hs2, use_reentrant=False)
 
         # Reshape tokens back to spatial maps at native resolutions
         #
@@ -192,22 +196,22 @@ class LET_FlowNet(BaseModel):
         flow0 = self.predict_flow[0](in0)
         hs_up = self.deconv[0](hc0_img) # Upsamples to 32x32
 
-        # Stage 1: Refine to 32x32 (using Scale 1 transformer skip)
+        # Stage 1: Refine to 32x32
         # Concat: flow(2) + block[2](128) + deconv(128) + transformer(128) = 386
         cat1 = torch.cat((flow0, blocks[2], hs_up, hc1_img), 1)
         in1 = self.UpsampleConv[1](cat1) # Upsamples to 64x64
         flow1 = self.predict_flow[1](in1)
         cat1_up = self.deconv[1](cat1) # Upsamples to 64x64
 
-        # Stage 2: Refine to 64x64 (using Scale 2 transformer skip)
+        # Stage 2: Refine to 64x64 - Checkpointing the upsampling fusion
         cat2 = torch.cat((flow1, blocks[1], cat1_up, hc2_img), 1)
-        in2 = self.UpsampleConv[2](cat2) # Upsamples to 128x128
+        in2 = checkpoint(self.UpsampleConv[2], cat2, use_reentrant=False)
         flow2 = self.predict_flow[2](in2)
-        cat2_up = self.deconv[2](cat2) # Upsamples to 128x128
+        cat2_up = checkpoint(self.deconv[2], cat2, use_reentrant=False)
 
-        # Stage 3: Refine to 128x128 (using Scale 3 transformer skip)
+        # Stage 3: Refine to 128x128 - Critical for OOM
         cat3 = torch.cat((flow2, blocks[0], cat2_up, hc3_img), 1)
-        in3 = self.UpsampleConv[3](cat3) # Upsamples to 256x256
+        in3 = checkpoint(self.UpsampleConv[3], cat3, use_reentrant=False)   # Upsamples to 256x256
         flow3 = self.predict_flow[3](in3)
 
         return [flow0, flow1, flow2, flow3]

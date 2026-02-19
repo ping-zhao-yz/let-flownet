@@ -63,18 +63,30 @@ class TransformerDecoderLayer(nn.Module):
         return tensor if pos is None else tensor + pos
 
     def forward(self, tgt, memory):
-        # self attention
+        # 1. Self Attention with Flash Attention
         q = k = v = self.norm1(tgt)
-        tgt1 = self.self_attn(q, k, v)[0]
+
+        # Permute to (batch, head, seq, dim) for scaled_dot_product_attention
+        tgt1 = F.scaled_dot_product_attention(
+            q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1),
+            dropout_p=self.self_attn.dropout if self.training else 0.0
+        ).transpose(0, 1) # Back to (seq, batch, dim)
+
         tgt2 = tgt + self.sattn_dropout(tgt1)
 
-        # cross attention
+        # 2. Cross Attention with Flash Attention
         q = self.norm21(tgt2)
         k = v = self.norm22(memory)
-        tgt3 = self.cross_attn(q, k, v)[0]
+
+        # Cross-attention uses tgt as Query and encoder 'memory' as Key/Value
+        tgt3 = F.scaled_dot_product_attention(
+            q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1),
+            dropout_p=self.cross_attn.dropout if self.training else 0.0
+        ).transpose(0, 1)
+
         tgt4 = tgt2 + self.cattn_dropout(tgt3)
 
-        # FFN
+        # 3. FFN
         tgt5 = self.norm3(tgt4)
         tgt6 = self.linear2(self.ffn_dropout1(self.activation(self.linear1(tgt5))))
         tgt7 = tgt4 + self.ffn_dropout2(tgt6)

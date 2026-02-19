@@ -68,7 +68,7 @@ src_file_dir = '../../../dataset/Event/mvsec/original'
 
 save_dir = 'let_flownet_dt1_output'
 
-train_env = 'outdoor_day2'
+train_env = 'outdoor_day1'
 test_env = 'indoor_flying1'
 
 train_dir = os.path.join(dataset_dir, train_env)
@@ -80,13 +80,13 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
 arch = "let_flownet"
 
-lr = 5e-5
+lr = 1e-4
 epochs = 100
-batch_size = 8
+batch_size = 2
 iter_g = 0
 
 
-def train(train_loader, model, optimizer, epoch, train_writer):
+def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     global iter_g, args, image_resize, sp_threshold
     np.set_printoptions(precision=2)
     losses = AverageMeter()
@@ -97,8 +97,11 @@ def train(train_loader, model, optimizer, epoch, train_writer):
     multiscale_weights = [1, 2, 4, 8]
     print_freq = 100
 
+    # 1. Define accumulation steps (e.g., 4 steps of size 2 = effective batch size 8)
+    accumulation_steps = 4 
+    optimizer.zero_grad() # Ensure gradients are zeroed before the first accumulation
+
     for i_batch, data in enumerate(train_loader, 0):
-        # get the inputs
         former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off, former_gray, latter_gray = data
 
         if torch.sum(former_inputs_on + former_inputs_off) > 0:
@@ -110,30 +113,38 @@ def train(train_loader, model, optimizer, epoch, train_writer):
             event_data = initInputRepresentation(
                 former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off)
 
-            # compute output
-            flow_predictions = model(event_data, image_resize, sp_threshold)
+            with torch.amp.autocast("cuda", torch.float16):
+                # compute output
+                flow_predictions = model(event_data, image_resize, sp_threshold)
 
-            # Photometric loss.
-            photometric_loss = calculate_photometric_loss(former_gray[:, 0, :, :], latter_gray[:, 0, :, :], torch.sum(
-                event_data, 4), flow_predictions, device, print_details, weights=multiscale_weights)
+                # Photometric loss.
+                photometric_loss = calculate_photometric_loss(former_gray[:, 0, :, :], latter_gray[:, 0, :, :], torch.sum(
+                    event_data, 4), flow_predictions, device, print_details, weights=multiscale_weights)
 
-            # Smoothness loss.
-            smoothness_loss = calculate_smooth_loss(flow_predictions)
+                # Smoothness loss.
+                smoothness_loss = calculate_smooth_loss(flow_predictions)
 
-            # total_loss
-            loss = photometric_loss + smoothness_loss
+                # 2. Normalize loss by accumulation_steps to keep the average gradient consistent
+                total_loss = (photometric_loss + smoothness_loss) / accumulation_steps
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            # 3. Scale and accumulate gradients
+            scaler.scale(total_loss).backward()
 
-            # record loss and EPE
-            train_writer.add_scalar('train_loss', loss.item(), iter_g)
-            losses.update(loss.item(), event_data.size(0))
+            # 4. Perform optimization step only every N batches
+            if (i_batch + 1) % accumulation_steps == 0 or (i_batch + 1) == len(train_loader):
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad() # Clear gradients for the next accumulation cycle
+
+            # Record non-normalized loss for logging accuracy
+            actual_loss_value = (photometric_loss + smoothness_loss).item()
+            train_writer.add_scalar('train_loss', actual_loss_value, iter_g)
+            losses.update(actual_loss_value, event_data.size(0))
 
             if print_details:
                 now = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M-%S")
-                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses}, photometric_loss: {round(photometric_loss.item(), 2)}, smoothness_loss: {smoothness_loss.item():.2f}')
+                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Effective Batch: {batch_size * accumulation_steps}')
+                print(f'Loss: {losses.avg:.4f}, photometric: {photometric_loss.item():.2f}, smoothness: {smoothness_loss.item():.2f}')
                 print('-------------------------------------------------------')
 
             iter_g += 1
@@ -312,9 +323,11 @@ def initInputRepresentation(former_inputs_on, former_inputs_off, latter_inputs_o
 def main():
     global args
 
+    scaler = torch.amp.GradScaler("cuda", enabled=True)
+
     workers = 4
     best_EPE = -1
-    evaluate_interval = 5
+    evaluate_interval = 3
 
     val_fail_times_max = 5
     val_fail_times = 0
@@ -393,7 +406,7 @@ def main():
                               num_workers=workers)
 
     for epoch in range(args.start_epoch, epochs):
-        train_loss = train(train_loader, model, optimizer, epoch, train_writer)
+        train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler)
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
 
         scheduler.step()
