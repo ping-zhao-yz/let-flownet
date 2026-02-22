@@ -80,7 +80,7 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
 arch = "let_flownet"
 
-lr = 2e-4
+lr = 5e-5
 epochs = 100
 batch_size = 2
 iter_g = 0
@@ -342,7 +342,7 @@ def initInputRepresentation(former_inputs_on, former_inputs_off, latter_inputs_o
 def main():
     global args
 
-    scaler = torch.amp.GradScaler("cuda", enabled=True)
+    scaler = torch.amp.GradScaler("cuda", enabled=True, init_scale=1024.0)
 
     workers = 4
     best_EPE = -1
@@ -406,12 +406,11 @@ def main():
         optimizer = torch.optim.SGD(
             param_groups, lr, momentum=0.9)
 
-    # Define the Warmup Scheduler (Epochs 0-4)
+    # Define the Warmup Scheduler
     warmup_epochs = 5
     scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
 
-    # Define the Main Scheduler (Starting from Epoch 5)
-    # Shift original milestones [5, 10, 20, 30, 40, 50, 60, 70, 80, 90] by -5
+    # Define the Main Scheduler
     main_milestones = [m - warmup_epochs for m in [5, 10, 20, 30, 40, 50, 60, 70, 80, 90]]
     scheduler_main = torch.optim.lr_scheduler.MultiStepLR(optimizer, main_milestones, gamma=0.7)
 
