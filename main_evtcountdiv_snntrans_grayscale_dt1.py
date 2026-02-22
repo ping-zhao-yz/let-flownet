@@ -5,13 +5,13 @@ import numpy as np
 import os
 import os.path
 import torch
-import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim
 import torchvision.transforms as transforms
 from datetime import datetime
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import LinearLR, SequentialLR
 from util.loss_util import AverageMeter
 from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
@@ -80,7 +80,7 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
 arch = "let_flownet"
 
-lr = 1e-4
+lr = 2e-4
 epochs = 100
 batch_size = 2
 iter_g = 0
@@ -94,7 +94,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     # switch to train mode
     model.train()
 
-    multiscale_weights = [1, 2, 4, 8]
+    multiscale_weights = [0.1, 0.2, 0.4, 0.8]
     print_freq = 100
 
     # 1. Define accumulation steps (e.g., 4 steps of size 2 = effective batch size 8)
@@ -105,7 +105,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
         former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off, former_gray, latter_gray = data
 
         if torch.sum(former_inputs_on + former_inputs_off) > 0:
-            print_details = i_batch % print_freq == 0
+            print_details = i_batch % print_freq == 0 or (i_batch + 1) == len(train_loader)
 
             if i_batch == 0:
                 print(f"VERIFICATION: dt={args.dt}, N (event frames) = {former_inputs_on.shape[-1]}")
@@ -118,33 +118,52 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                 flow_predictions = model(event_data, image_resize, sp_threshold)
 
                 # Photometric loss.
-                photometric_loss = calculate_photometric_loss(former_gray[:, 0, :, :], latter_gray[:, 0, :, :], torch.sum(
-                    event_data, 4), flow_predictions, device, print_details, weights=multiscale_weights)
+                photometric_loss = calculate_photometric_loss(
+                    former_gray[:, 0, :, :],
+                    latter_gray[:, 0, :, :],
+                    torch.sum(event_data, 4),
+                    flow_predictions,
+                    device,
+                    print_details,
+                    weights=multiscale_weights)
 
                 # Smoothness loss.
                 smoothness_loss = calculate_smooth_loss(flow_predictions)
 
                 # 2. Normalize loss by accumulation_steps to keep the average gradient consistent
-                total_loss = (photometric_loss + smoothness_loss) / accumulation_steps
+                total_loss = 100 * (20 * photometric_loss + smoothness_loss) / accumulation_steps
+
+            # Check for NaNs in loss BEFORE backward
+            if not torch.isfinite(total_loss):
+                print(f"Skipping batch {i_batch} due to NaN loss")
+                optimizer.zero_grad() # Clear any partial accumulation
+                continue
 
             # 3. Scale and accumulate gradients
             scaler.scale(total_loss).backward()
 
             # 4. Perform optimization step only every N batches
             if (i_batch + 1) % accumulation_steps == 0 or (i_batch + 1) == len(train_loader):
+                # ROBUSTNESS: Unscale gradients before clipping
+                scaler.unscale_(optimizer)
+
+                # GRADIENT CLIPPING: Prevents NaNs from exploding gradients
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
                 scaler.step(optimizer)
                 scaler.update()
-                optimizer.zero_grad() # Clear gradients for the next accumulation cycle
+                optimizer.zero_grad()
 
-            # Record non-normalized loss for logging accuracy
-            actual_loss_value = (photometric_loss + smoothness_loss).item()
-            train_writer.add_scalar('train_loss', actual_loss_value, iter_g)
-            losses.update(actual_loss_value, event_data.size(0))
+            # Identify the 'full batch' value for logging (undo the accumulation division)
+            actual_batch_loss = total_loss.item() * accumulation_steps
+
+            # Log consistently to both destinations
+            train_writer.add_scalar('train_loss', actual_batch_loss, iter_g)
+            losses.update(actual_batch_loss, event_data.size(0))
 
             if print_details:
                 now = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M-%S")
-                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Effective Batch: {batch_size * accumulation_steps}')
-                print(f'Loss: {losses.avg:.4f}, photometric: {photometric_loss.item():.2f}, smoothness: {smoothness_loss.item():.2f}')
+                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses}, photometric: {photometric_loss.item():.2f}, smoothness: {smoothness_loss.item():.2f}')
                 print('-------------------------------------------------------')
 
             iter_g += 1
@@ -327,7 +346,7 @@ def main():
 
     workers = 4
     best_EPE = -1
-    evaluate_interval = 3
+    evaluate_interval = 1
 
     val_fail_times_max = 5
     val_fail_times = 0
@@ -387,8 +406,19 @@ def main():
         optimizer = torch.optim.SGD(
             param_groups, lr, momentum=0.9)
 
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer, [5, 10, 20, 30, 40, 50, 60, 70, 80, 90], gamma=0.7)
+    # Define the Warmup Scheduler (Epochs 0-4)
+    warmup_epochs = 5
+    scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
+
+    # Define the Main Scheduler (Starting from Epoch 5)
+    # Shift original milestones [5, 10, 20, 30, 40, 50, 60, 70, 80, 90] by -5
+    main_milestones = [m - warmup_epochs for m in [5, 10, 20, 30, 40, 50, 60, 70, 80, 90]]
+    scheduler_main = torch.optim.lr_scheduler.MultiStepLR(optimizer, main_milestones, gamma=0.7)
+
+    # Combine into SequentialLR
+    scheduler = SequentialLR(optimizer, 
+                            schedulers=[scheduler_warmup, scheduler_main], 
+                            milestones=[warmup_epochs])
 
     co_transform = transforms.Compose([
         transforms.ToPILImage(),
