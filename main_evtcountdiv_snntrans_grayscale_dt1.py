@@ -68,7 +68,7 @@ src_file_dir = '../../../dataset/Event/mvsec/original'
 
 save_dir = 'let_flownet_dt1_output'
 
-train_env = 'outdoor_day1'
+train_env = 'outdoor_day2'
 test_env = 'indoor_flying1'
 
 train_dir = os.path.join(dataset_dir, train_env)
@@ -80,7 +80,7 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
 arch = "let_flownet"
 
-lr = 5e-5
+lr = 2e-4
 epochs = 100
 batch_size = 2
 iter_g = 0
@@ -346,6 +346,8 @@ def main():
 
     workers = 4
     best_EPE = -1
+
+    # TODO: For debugging, set evaluate_interval to 1 to evaluate every epoch. Change back to 5 for full training.
     evaluate_interval = 1
 
     val_fail_times_max = 5
@@ -407,7 +409,8 @@ def main():
             param_groups, lr, momentum=0.9)
 
     # Define the Warmup Scheduler
-    warmup_epochs = 5
+    # TODO: for debugging, use a shorter warmup (e.g., 1 epoch) to speed up iterations. Change back to 5 epochs for full training.
+    warmup_epochs = 1
     scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
 
     # Define the Main Scheduler
@@ -427,14 +430,22 @@ def main():
         transforms.ToTensor(),
     ])
 
-    Train_dataset = DatasetTrain(
+    train_dataset = DatasetTrain(
         train_src_file, train_dir, transform=co_transform)
-    train_loader = DataLoader(dataset=Train_dataset,
+    
+    # TODO: For debugging, use a subset of the training data (e.g., every 10th sample) to speed up iterations. Remove this for full training.
+    train_indices = list(range(0, len(train_dataset), 10))
+
+    train_loader = DataLoader(dataset=torch.utils.data.Subset(train_dataset, train_indices),
                               batch_size=batch_size,
                               shuffle=True,
                               num_workers=workers)
 
     for epoch in range(args.start_epoch, epochs):
+
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Learning Rate: {current_lr:.6f}")
+
         train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler)
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
 
