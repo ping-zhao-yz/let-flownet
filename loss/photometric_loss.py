@@ -70,14 +70,14 @@ def calculate_photometric_loss(prev_images_temp, next_images_temp, event_images,
             prev_images_resize[b, 0, :, :] = torch.from_numpy(
                 cv2.resize(
                     prev_images[b, :, :], 
-                    (height, width), 
+                    (width, height), 
                     interpolation=cv2.INTER_LINEAR
                 )
             )
             next_images_resize[b, 0, :, :] = torch.from_numpy(
                 cv2.resize(
                     next_images[b, :, :], 
-                    (height, width), 
+                    (width, height), 
                     interpolation=cv2.INTER_LINEAR
                 )
             )
