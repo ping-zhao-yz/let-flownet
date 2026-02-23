@@ -68,7 +68,7 @@ src_file_dir = '../../../dataset/Event/mvsec/original'
 
 save_dir = 'let_flownet_dt1_output'
 
-train_env = 'outdoor_day2'
+train_env = 'outdoor_day1'
 test_env = 'indoor_flying1'
 
 train_dir = os.path.join(dataset_dir, train_env)
@@ -81,7 +81,10 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 arch = "let_flownet"
 
 lr = 2e-4
-epochs = 100
+
+# TODO: For debugging, set epochs to a smaller number (e.g., 2) to speed up iterations. Change back to 100 for full training.
+epochs = 9
+
 batch_size = 2
 iter_g = 0
 
@@ -348,7 +351,7 @@ def main():
     best_EPE = -1
 
     # TODO: For debugging, set evaluate_interval to 1 to evaluate every epoch. Change back to 5 for full training.
-    evaluate_interval = 1
+    evaluate_interval = 3
 
     val_fail_times_max = 5
     val_fail_times = 0
@@ -434,12 +437,14 @@ def main():
         train_src_file, train_dir, transform=co_transform)
     
     # TODO: For debugging, use a subset of the training data (e.g., every 10th sample) to speed up iterations. Remove this for full training.
-    train_indices = list(range(0, len(train_dataset), 10))
+    # train_indices = list(range(0, len(train_dataset), 10))
 
-    train_loader = DataLoader(dataset=torch.utils.data.Subset(train_dataset, train_indices),
-                              batch_size=batch_size,
-                              shuffle=True,
-                              num_workers=workers)
+    train_loader = DataLoader(
+        # dataset=torch.utils.data.Subset(train_dataset, train_indices),
+        dataset=train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=workers)
 
     for epoch in range(args.start_epoch, epochs):
 
