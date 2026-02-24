@@ -132,7 +132,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                 smoothness_loss = calculate_smooth_loss(flow_predictions)
 
                 # Scaled total loss. Lowered manual scale to 50 to avoid NaN in FP16
-                total_loss = 50 * (20 * photometric_loss + smoothness_loss)
+                total_loss = 100 * (20 * photometric_loss + smoothness_loss)
 
             # Check for NaNs in loss BEFORE backward
             if not torch.isfinite(total_loss):
