@@ -80,12 +80,12 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
 arch = "let_flownet"
 
-lr = 2e-4
+lr = 1e-5
 
 # TODO: For debugging, set epochs to a smaller number (e.g., 2) to speed up iterations. Change back to 100 for full training.
-epochs = 9
+epochs = 21
 
-batch_size = 2
+batch_size = 4
 iter_g = 0
 
 
@@ -101,7 +101,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     print_freq = 100
 
     # 1. Define accumulation steps (e.g., 4 steps of size 2 = effective batch size 8)
-    accumulation_steps = 4 
+    accumulation_steps = 2 
     optimizer.zero_grad() # Ensure gradients are zeroed before the first accumulation
 
     for i_batch, data in enumerate(train_loader, 0):
@@ -413,7 +413,7 @@ def main():
 
     # Define the Warmup Scheduler
     # TODO: for debugging, use a shorter warmup (e.g., 1 epoch) to speed up iterations. Change back to 5 epochs for full training.
-    warmup_epochs = 1
+    warmup_epochs = 2
     scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
 
     # Define the Main Scheduler
