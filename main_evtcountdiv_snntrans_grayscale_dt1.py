@@ -80,7 +80,7 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
 arch = "let_flownet"
 
-lr = 1e-5
+lr = 5e-5
 
 # TODO: For debugging, set epochs to a smaller number (e.g., 2) to speed up iterations. Change back to 100 for full training.
 epochs = 21
@@ -131,8 +131,8 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                 # Smoothness loss.
                 smoothness_loss = calculate_smooth_loss(flow_predictions)
 
-                # Scaled total loss. Lowered manual scale to 10 to avoid NaN in FP16
-                total_loss = 10 * (20 * photometric_loss + smoothness_loss)
+                # Scaled total loss. Lowered manual scale to 50 to avoid NaN in FP16
+                total_loss = 50 * (20 * photometric_loss + smoothness_loss)
 
             # Check for NaNs in loss BEFORE backward
             if not torch.isfinite(total_loss):
@@ -402,7 +402,7 @@ def main():
 
     # Define the Warmup Scheduler
     # TODO: for debugging, use a shorter warmup (e.g., 1 epoch) to speed up iterations. Change back to 5 epochs for full training.
-    warmup_epochs = 2
+    warmup_epochs = 3
     scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
 
     # Define the Main Scheduler
