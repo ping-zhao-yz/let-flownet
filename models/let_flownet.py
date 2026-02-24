@@ -13,7 +13,6 @@ from .trans.transformer_decoder import transformer_decoder
 from .trans.position_encoding import build_position_encoding
 from .model_util import ConvLayer, UpsampleConvLayer, conv_s, deconv, predict_flow
 
-from torch.utils.checkpoint import checkpoint
 
 __all__ = ['let_flownet']
 
@@ -162,14 +161,14 @@ class LET_FlowNet(BaseModel):
         # Scale 2: 64x64 tokens
         t2 = self.split2(blocks[-3]).flatten(2).transpose(1, 2)
         p2 = self.position_embedding(t2)
-        hs2 = checkpoint(self.trans_encoder2, t2.transpose(0, 1), p2.transpose(0, 1), use_reentrant=False)
-        hc2 = checkpoint(self.trans_decoder2, hs2, hs1, use_reentrant=False)
+        hs2 = self.trans_encoder2(t2.transpose(0, 1), p2.transpose(0, 1))
+        hc2 = self.trans_decoder2(tgt=hs2, memory=hs1)
 
         # Scale 3: Cap at 64x64 tokens for efficiency
         t3 = self.split3(blocks[-4]).flatten(2).transpose(1, 2)
         p3 = self.position_embedding(t3)
-        hs3 = checkpoint(self.trans_encoder3, t3.transpose(0, 1), p3.transpose(0, 1), use_reentrant=False)
-        hc3 = checkpoint(self.trans_decoder3, hs3, hs2, use_reentrant=False)
+        hs3 = self.trans_encoder3(t3.transpose(0, 1), p3.transpose(0, 1))
+        hc3 = self.trans_decoder3(tgt=hs3, memory=hs2)
 
         H, W = image_resize, image_resize
         hc0_img = rearrange(hc0, '(h w) n c -> n c h w', h=H//16, w=W//16) # 16x16
@@ -191,14 +190,14 @@ class LET_FlowNet(BaseModel):
 
         # Stage 2: Refine to 64x64
         cat2 = torch.cat((flow1, blocks[1], cat1_up, hc2_img), 1)
-        in2 = checkpoint(self.UpsampleConv[2], cat2, use_reentrant=False)
+        in2 = self.UpsampleConv[2](cat2)
         flow2 = self.predict_flow[2](in2)
-        cat2_up = checkpoint(self.deconv[2], cat2, use_reentrant=False)
+        cat2_up = self.deconv[2](cat2)
 
         # Stage 3: Refine to 128x128
         hc3_up = F.interpolate(hc3_img, scale_factor=2, mode='bilinear', align_corners=False)
         cat3 = torch.cat((flow2, blocks[0], cat2_up, hc3_up), 1)
-        in3 = checkpoint(self.UpsampleConv[3], cat3, use_reentrant=False)   
+        in3 = self.UpsampleConv[3](cat3)
         flow3 = self.predict_flow[3](in3)
 
         return [flow0, flow1, flow2, flow3]
