@@ -29,14 +29,14 @@ class LET_FlowNet(BaseModel):
         dt = getattr(args, 'dt', 1)
         norm = self.args.norm
 
-        # 1. SNN Encoder: Unified to 128 channels across all scales
+        # 1. SNN Encoder: 128 channels across all scales
         self.batchNorm = batchNorm
         self.conv_s1 = conv_s(self.batchNorm, 4, 128, stride=2)
         self.conv_s2 = conv_s(self.batchNorm, 128, 128, stride=2)
         self.conv_s3 = conv_s(self.batchNorm, 128, 128, stride=2)
         self.conv_s4 = conv_s(self.batchNorm, 128, 128, stride=2)
 
-        # use 3 for dt1, and 2 for dt4 and larger (e.g. dt8)
+        # Weight initialization for SNN
         numerator = 3.0 if dt == 1 else 2.0
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -49,57 +49,56 @@ class LET_FlowNet(BaseModel):
         time_step = dt * 10 * 1e-3
         self.alpha = np.exp(-time_step/self.args.tau)
 
-        # 2. TPA (Transformer Pyramid): Unified d_model = 128
-        self.head = ConvLayer(in_channels=4, out_channels=64, kernel_size=5, stride=1, padding=2, norm=norm)
+        # 2. TPA (Transformer Pyramid): Enhanced Capacity (d_model=256)
+        num_enc_layers = self.args.num_enc_layers
+        num_dec_layers = self.args.num_dec_layers
+        d_model = 256 # Increased for higher capacity
+        dim_ff = 512  # Increased for higher capacity
         
-        # Initialize with n_position=16384 to support 128x128 tokens at scale 3
-        self.position_embedding = build_position_encoding('sine', 128, n_position=16384)
+        # 4096 supports 64x64 tokens, avoiding the 128x128 memory bottleneck
+        self.position_embedding = build_position_encoding('sine', d_model, n_position=4096)
         
         self.split0 = nn.Unfold(kernel_size=1, stride=1, padding=0)
 
-        num_enc_layers = self.args.num_enc_layers
-        num_dec_layers = self.args.num_dec_layers
-        d_model = 128
-        dim_ff = 256 # Reduced FFN to save memory
-
-        # Chained Scale-Aware Transformers
-        self.trans_encoder0 = transformer_encoder(d_model=d_model, nhead=4, num_encoder_layers=num_enc_layers,
+        # Chained Scale-Aware Transformers with d_model=256
+        self.trans_encoder0 = transformer_encoder(d_model=d_model, nhead=8, num_encoder_layers=num_enc_layers,
                                                 dim_feedforward=dim_ff, activation='relu', dropout=0.1)
-        self.trans_decoder0 = transformer_decoder(d_model=d_model, nhead=4, num_decoder_layers=num_dec_layers,
+        self.trans_decoder0 = transformer_decoder(d_model=d_model, nhead=8, num_decoder_layers=num_dec_layers,
                                                 dim_feedforward=dim_ff, activation='relu', dropout=0.1)
         
-        # Scale 1-3 Tokenizers: 128 -> 128 with stride=1 for native resolution
+        # Scale 1-2 Tokenizers: Stride 1 to maintain 32x32 and 64x64 respectively
         self.split1 = ConvLayer(128, d_model, kernel_size=3, stride=1, padding=1, norm=norm)
-        self.trans_encoder1 = transformer_encoder(d_model=d_model, nhead=4, num_encoder_layers=num_enc_layers, 
+        self.trans_encoder1 = transformer_encoder(d_model=d_model, nhead=8, num_encoder_layers=num_enc_layers, 
                                                 dim_feedforward=dim_ff, activation='relu', dropout=0.1)
-        self.trans_decoder1 = transformer_decoder(d_model=d_model, nhead=4, num_decoder_layers=num_dec_layers,
+        self.trans_decoder1 = transformer_decoder(d_model=d_model, nhead=8, num_decoder_layers=num_dec_layers,
                                                 dim_feedforward=dim_ff, activation='relu', dropout=0.1)
         
         self.split2 = ConvLayer(128, d_model, kernel_size=3, stride=1, padding=1, norm=norm)
-        self.trans_encoder2 = transformer_encoder(d_model=d_model, nhead=4, num_encoder_layers=num_enc_layers, 
+        self.trans_encoder2 = transformer_encoder(d_model=d_model, nhead=8, num_encoder_layers=num_enc_layers, 
                                                 dim_feedforward=dim_ff, activation='relu', dropout=0.1)
-        self.trans_decoder2 = transformer_decoder(d_model=d_model, nhead=4, num_decoder_layers=num_dec_layers,
+        self.trans_decoder2 = transformer_decoder(d_model=d_model, nhead=8, num_decoder_layers=num_dec_layers,
                                                 dim_feedforward=dim_ff, activation='relu', dropout=0.1)
         
-        self.split3 = ConvLayer(128, d_model, kernel_size=3, stride=1, padding=1, norm=norm)
-        self.trans_encoder3 = transformer_encoder(d_model=d_model, nhead=4, num_encoder_layers=num_enc_layers, 
+        # Scale 3 Tokenizer: Stride 2 to cap resolution at 64x64 for efficiency
+        self.split3 = ConvLayer(128, d_model, kernel_size=3, stride=2, padding=1, norm=norm)
+        self.trans_encoder3 = transformer_encoder(d_model=d_model, nhead=8, num_encoder_layers=num_enc_layers, 
                                                 dim_feedforward=dim_ff, activation='relu', dropout=0.1)
-        self.trans_decoder3 = transformer_decoder(d_model=d_model, nhead=4, num_decoder_layers=num_dec_layers,
+        self.trans_decoder3 = transformer_decoder(d_model=d_model, nhead=8, num_decoder_layers=num_dec_layers,
                                                 dim_feedforward=dim_ff, activation='relu', dropout=0.1)
 
-        # 3. MLU (Multi-Level Upsampler): Hierarchical concatenation
-        # concat_in = flow(2) + block(128) + deconv(128) + transformer_skip(128) = 386
+        # 3. MLU (Multi-Level Upsampler): Adjusted for d_model=256
+        # concat_in = flow(2) + snn_block(128) + deconv_prev(128) + trans_skip(256) = 514
         self.deconv = nn.ModuleList([
-            deconv(self.batchNorm, 128, 128),
-            deconv(self.batchNorm, 386, 128),
-            deconv(self.batchNorm, 386, 128)
+            deconv(self.batchNorm, d_model, 128), # Stage 0
+            deconv(self.batchNorm, 514, 128),     # Stage 1
+            deconv(self.batchNorm, 514, 128)      # Stage 2
         ])
         
         self.UpsampleConv = nn.ModuleList([
-            UpsampleConvLayer(in_channels=128, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm),
-            UpsampleConvLayer(in_channels=386, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm),
-            UpsampleConvLayer(in_channels=386, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm),
-            UpsampleConvLayer(in_channels=386, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm)
+            UpsampleConvLayer(in_channels=d_model, out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm),
+            UpsampleConvLayer(in_channels=514,     out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm),
+            UpsampleConvLayer(in_channels=514,     out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm),
+            UpsampleConvLayer(in_channels=514,     out_channels=128, kernel_size=5, stride=1, padding=2, norm=norm)
         ])
 
         self.predict_flow = nn.ModuleList([
@@ -110,14 +109,10 @@ class LET_FlowNet(BaseModel):
         ])
 
     def forward(self, input, image_resize, sp_threshold):
-        # 1. Encoder-SNN: Unified 128-channel temporal feature extraction
-        #
         threshold = sp_threshold
         alpha = self.alpha
         N, _, _, _, T = input.shape
 
-        # Initialize memories at 128 channels for all scales
-        #
         m1 = torch.zeros(N, 128, image_resize//2,  image_resize//2).to(input.device)
         m2 = torch.zeros(N, 128, image_resize//4,  image_resize//4).to(input.device)
         m3 = torch.zeros(N, 128, image_resize//8,  image_resize//8).to(input.device)
@@ -148,70 +143,62 @@ class LET_FlowNet(BaseModel):
             m4, s4 = LIF_Neuron(m4, threshold)
             m4_t += cur4
 
-        blocks = [m1_t, m2_t, m3_t, m4_t] # [128, 64, 32, 16] resolutions
+        blocks = [m1_t, m2_t, m3_t, m4_t] 
 
-        # 2. TPA (Transformer Pyramid): Hierarchical Tokenization
-        #
-        
-        # Scale 0: 16x16 tokens (mem_4)
+        # 2. TPA (Transformer Pyramid) reasoning
+        # Scale 0: 16x16 tokens
         t0 = self.split0(blocks[-1]).transpose(1, 2)
         p0 = self.position_embedding(t0)
         hs0 = self.trans_encoder0(src=t0.transpose(0, 1), pos=p0.transpose(0, 1))
         hc0 = self.trans_decoder0(tgt=hs0, memory=hs0)
 
-        # Scale 1: 32x32 tokens (mem_3)
+        # Scale 1: 32x32 tokens
         t1 = self.split1(blocks[-2]).flatten(2).transpose(1, 2)
         p1 = self.position_embedding(t1)
         hs1 = self.trans_encoder1(src=t1.transpose(0, 1), pos=p1.transpose(0, 1))
-        hc1 = self.trans_decoder1(tgt=hs1, memory=hs0) # Chained memory
+        hc1 = self.trans_decoder1(tgt=hs1, memory=hs0)
 
-        # Scale 2: 64x64 tokens (mem_2) - Implement Checkpointing
+        # Scale 2: 64x64 tokens
         t2 = self.split2(blocks[-3]).flatten(2).transpose(1, 2)
         p2 = self.position_embedding(t2)
-
-        # Wrap encoder and decoder separately to maximize memory savings
         hs2 = checkpoint(self.trans_encoder2, t2.transpose(0, 1), p2.transpose(0, 1), use_reentrant=False)
         hc2 = checkpoint(self.trans_decoder2, hs2, hs1, use_reentrant=False)
 
-        # Scale 3: 128x128 tokens (mem_1) - Implement Checkpointing
+        # Scale 3: Cap at 64x64 tokens for efficiency
         t3 = self.split3(blocks[-4]).flatten(2).transpose(1, 2)
         p3 = self.position_embedding(t3)
-
         hs3 = checkpoint(self.trans_encoder3, t3.transpose(0, 1), p3.transpose(0, 1), use_reentrant=False)
         hc3 = checkpoint(self.trans_decoder3, hs3, hs2, use_reentrant=False)
 
-        # Reshape tokens back to spatial maps at native resolutions
-        #
         H, W = image_resize, image_resize
         hc0_img = rearrange(hc0, '(h w) n c -> n c h w', h=H//16, w=W//16) # 16x16
         hc1_img = rearrange(hc1, '(h w) n c -> n c h w', h=H//8,  w=W//8)  # 32x32
         hc2_img = rearrange(hc2, '(h w) n c -> n c h w', h=H//4,  w=W//4)  # 64x64
-        hc3_img = rearrange(hc3, '(h w) n c -> n c h w', h=H//2,  w=W//2)  # 128x128
+        hc3_img = rearrange(hc3, '(h w) n c -> n c h w', h=H//4,  w=W//4)  # 64x64
 
-        # 3. MLU (Multi-Level Upsampler): Refined Hierarchical Concatenation
-        #
-
-        # Stage 0: Smallest scale (16x16)
-        in0 = self.UpsampleConv[0](hc0_img) # Upsamples to 32x32
+        # 3. MLU (Multi-Level Upsampler) Hierarchical Fusion
+        # Stage 0: Refine to 16x16
+        in0 = self.UpsampleConv[0](hc0_img) 
         flow0 = self.predict_flow[0](in0)
-        hs_up = self.deconv[0](hc0_img) # Upsamples to 32x32
+        hs_up = self.deconv[0](hc0_img) 
 
         # Stage 1: Refine to 32x32
-        # Concat: flow(2) + block[2](128) + deconv(128) + transformer(128) = 386
         cat1 = torch.cat((flow0, blocks[2], hs_up, hc1_img), 1)
-        in1 = self.UpsampleConv[1](cat1) # Upsamples to 64x64
+        in1 = self.UpsampleConv[1](cat1) 
         flow1 = self.predict_flow[1](in1)
-        cat1_up = self.deconv[1](cat1) # Upsamples to 64x64
+        cat1_up = self.deconv[1](cat1) 
 
-        # Stage 2: Refine to 64x64 - Checkpointing the upsampling fusion
+        # Stage 2: Refine to 64x64
         cat2 = torch.cat((flow1, blocks[1], cat1_up, hc2_img), 1)
         in2 = checkpoint(self.UpsampleConv[2], cat2, use_reentrant=False)
         flow2 = self.predict_flow[2](in2)
         cat2_up = checkpoint(self.deconv[2], cat2, use_reentrant=False)
 
-        # Stage 3: Refine to 128x128 - Critical for OOM
-        cat3 = torch.cat((flow2, blocks[0], cat2_up, hc3_img), 1)
-        in3 = checkpoint(self.UpsampleConv[3], cat3, use_reentrant=False)   # Upsamples to 256x256
+        # Stage 3: Refine to 128x128
+        # Upsample hc3_img (64x64) to 128x128 to match blocks[0] and cat2_up
+        hc3_up = F.interpolate(hc3_img, scale_factor=2, mode='bilinear', align_corners=False)
+        cat3 = torch.cat((flow2, blocks[0], cat2_up, hc3_up), 1)
+        in3 = checkpoint(self.UpsampleConv[3], cat3, use_reentrant=False)   
         flow3 = self.predict_flow[3](in3)
 
         return [flow0, flow1, flow2, flow3]
@@ -231,6 +218,5 @@ def let_flownet(args, device, data=None):
             model.load_state_dict(data['state_dict'], strict=False)
         except RuntimeError as e:
             print(f"Error loading state dict: {e}")
-            print("Continuing without pre-trained weights.")
 
     return model
