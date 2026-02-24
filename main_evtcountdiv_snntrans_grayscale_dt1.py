@@ -85,7 +85,7 @@ lr = 1e-5
 # TODO: For debugging, set epochs to a smaller number (e.g., 2) to speed up iterations. Change back to 100 for full training.
 epochs = 21
 
-batch_size = 4
+batch_size = 8
 iter_g = 0
 
 
@@ -100,10 +100,6 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     multiscale_weights = [0.1, 0.2, 0.4, 0.8]
     print_freq = 100
 
-    # 1. Define accumulation steps (e.g., 4 steps of size 2 = effective batch size 8)
-    accumulation_steps = 2 
-    optimizer.zero_grad() # Ensure gradients are zeroed before the first accumulation
-
     for i_batch, data in enumerate(train_loader, 0):
         former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off, former_gray, latter_gray = data
 
@@ -115,6 +111,8 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
 
             event_data = initInputRepresentation(
                 former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off)
+
+            optimizer.zero_grad() # Clear gradients for every batch
 
             with torch.amp.autocast("cuda", torch.float16):
                 # compute output
@@ -133,32 +131,29 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                 # Smoothness loss.
                 smoothness_loss = calculate_smooth_loss(flow_predictions)
 
-                # 2. Normalize loss by accumulation_steps to keep the average gradient consistent
-                total_loss = 100 * (20 * photometric_loss + smoothness_loss) / accumulation_steps
+                # Scaled total loss
+                total_loss = 100 * (20 * photometric_loss + smoothness_loss)
 
             # Check for NaNs in loss BEFORE backward
             if not torch.isfinite(total_loss):
                 print(f"Skipping batch {i_batch} due to NaN loss")
-                optimizer.zero_grad() # Clear any partial accumulation
                 continue
 
-            # 3. Scale and accumulate gradients
+            # Scale and backward
             scaler.scale(total_loss).backward()
 
-            # 4. Perform optimization step only every N batches
-            if (i_batch + 1) % accumulation_steps == 0 or (i_batch + 1) == len(train_loader):
-                # ROBUSTNESS: Unscale gradients before clipping
-                scaler.unscale_(optimizer)
+            # Perform optimization step for every batch
+            # ROBUSTNESS: Unscale gradients before clipping
+            scaler.unscale_(optimizer)
 
-                # GRADIENT CLIPPING: Prevents NaNs from exploding gradients
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # GRADIENT CLIPPING: Prevents NaNs from exploding gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
+            scaler.step(optimizer)
+            scaler.update()
 
-            # Identify the 'full batch' value for logging (undo the accumulation division)
-            actual_batch_loss = total_loss.item() * accumulation_steps
+            # Record the actual loss value for logging
+            actual_batch_loss = total_loss.item()
 
             # Log consistently to both destinations
             train_writer.add_scalar('train_loss', actual_batch_loss, iter_g)
@@ -329,15 +324,10 @@ def initInputRepresentation(former_inputs_on, former_inputs_off, latter_inputs_o
     input_representation = torch.zeros(
         former_inputs_on.size(0), 4, image_resize, image_resize, former_inputs_on.size(3)).float()
 
-    for b in range(4):
-        if b == 0:
-            input_representation[:, 0, :, :, :] = former_inputs_on
-        elif b == 1:
-            input_representation[:, 1, :, :, :] = former_inputs_off
-        elif b == 2:
-            input_representation[:, 2, :, :, :] = latter_inputs_on
-        elif b == 3:
-            input_representation[:, 3, :, :, :] = latter_inputs_off
+    input_representation[:, 0, :, :, :] = former_inputs_on
+    input_representation[:, 1, :, :, :] = former_inputs_off
+    input_representation[:, 2, :, :, :] = latter_inputs_on
+    input_representation[:, 3, :, :, :] = latter_inputs_off
 
     return input_representation.type(torch.FloatTensor).to(device)
 
@@ -436,11 +426,7 @@ def main():
     train_dataset = DatasetTrain(
         train_src_file, train_dir, transform=co_transform)
     
-    # TODO: For debugging, use a subset of the training data (e.g., every 10th sample) to speed up iterations. Remove this for full training.
-    # train_indices = list(range(0, len(train_dataset), 10))
-
     train_loader = DataLoader(
-        # dataset=torch.utils.data.Subset(train_dataset, train_indices),
         dataset=train_dataset,
         batch_size=batch_size,
         shuffle=True,
