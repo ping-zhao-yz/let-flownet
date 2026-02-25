@@ -68,7 +68,7 @@ src_file_dir = '../../../dataset/Event/mvsec/original'
 
 save_dir = 'let_flownet_dt1_output'
 
-train_env = 'outdoor_day1'
+train_env = 'outdoor_day2'
 test_env = 'indoor_flying1'
 
 train_dir = os.path.join(dataset_dir, train_env)
@@ -83,7 +83,7 @@ arch = "let_flownet"
 lr = 2e-4
 
 # TODO: For debugging, set epochs to a smaller number (e.g., 2) to speed up iterations. Change back to 100 for full training.
-epochs = 21
+epochs = 100
 
 batch_size = 8
 iter_g = 0
@@ -340,7 +340,7 @@ def main():
     best_EPE = -1
 
     # TODO: For debugging, set evaluate_interval to 1 to evaluate every epoch. Change back to 5 for full training.
-    evaluate_interval = 3
+    evaluate_interval = 5
 
     val_fail_times_max = 5
     val_fail_times = 0
@@ -402,7 +402,7 @@ def main():
 
     # Define the Warmup Scheduler
     # TODO: for debugging, use a shorter warmup (e.g., 1 epoch) to speed up iterations. Change back to 5 epochs for full training.
-    warmup_epochs = 1
+    warmup_epochs = 2
     scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
 
     # Define the Main Scheduler
