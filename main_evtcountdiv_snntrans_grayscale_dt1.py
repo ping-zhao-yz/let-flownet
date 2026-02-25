@@ -80,7 +80,7 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
 arch = "let_flownet"
 
-lr = 5e-5
+lr = 2e-4
 
 # TODO: For debugging, set epochs to a smaller number (e.g., 2) to speed up iterations. Change back to 100 for full training.
 epochs = 21
@@ -402,7 +402,7 @@ def main():
 
     # Define the Warmup Scheduler
     # TODO: for debugging, use a shorter warmup (e.g., 1 epoch) to speed up iterations. Change back to 5 epochs for full training.
-    warmup_epochs = 3
+    warmup_epochs = 1
     scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
 
     # Define the Main Scheduler
