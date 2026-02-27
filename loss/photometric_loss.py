@@ -10,7 +10,7 @@ from models.warp.Forward_Warp.forward_warp import forward_warp_fn
 Robust Charbonnier loss.
 """
 def charbonnier_loss(delta, alpha=0.45, epsilon=1e-3):
-    loss = torch.mean(
+    loss = torch.sum(
         torch.pow(torch.mul(delta, delta) + torch.mul(epsilon, epsilon), alpha)
     )
     return loss

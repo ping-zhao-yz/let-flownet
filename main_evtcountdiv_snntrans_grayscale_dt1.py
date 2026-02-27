@@ -63,12 +63,14 @@ sp_threshold = args.sp_threshold
 
 div_flow = 1
 
-dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
-src_file_dir = '../../../dataset/Event/mvsec/original'
+dataset_dir = 'Document/code/research/dataset/Event/mvsec/preprocessed'
+src_file_dir = 'Document/code/research/dataset/Event/mvsec/original'
+# dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
+# src_file_dir = '../../../dataset/Event/mvsec/original'
 
 save_dir = 'let_flownet_dt1_output'
 
-train_env = 'outdoor_day2'
+train_env = 'outdoor_day1'
 test_env = 'indoor_flying1'
 
 train_dir = os.path.join(dataset_dir, train_env)
@@ -83,7 +85,7 @@ arch = "let_flownet"
 lr = 2e-4
 
 # TODO: For debugging, set epochs to a smaller number (e.g., 2) to speed up iterations. Change back to 100 for full training.
-epochs = 100
+epochs = 21
 
 batch_size = 8
 iter_g = 0
@@ -132,7 +134,16 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                 smoothness_loss = calculate_smooth_loss(flow_predictions)
 
                 # Scaled total loss. Lowered manual scale to 50 to avoid NaN in FP16
-                total_loss = 100 * (20 * photometric_loss + smoothness_loss)
+                # total_loss = 100 * (20 * photometric_loss + smoothness_loss)
+
+                # effective_weight = original_weight / pixels 
+                # e.g., 20 / 65536 is roughly 0.0003
+                photometric_weight = 0.0003
+
+                # keep smoothness as a mean for now:
+                smoothness_weight = 0.1 # Adjust based on logs
+
+                total_loss = 100 * (photometric_weight * photometric_loss + smoothness_weight * smoothness_loss)
 
             # Check for NaNs in loss BEFORE backward
             if not torch.isfinite(total_loss):
@@ -340,7 +351,7 @@ def main():
     best_EPE = -1
 
     # TODO: For debugging, set evaluate_interval to 1 to evaluate every epoch. Change back to 5 for full training.
-    evaluate_interval = 5
+    evaluate_interval = 3
 
     val_fail_times_max = 5
     val_fail_times = 0
