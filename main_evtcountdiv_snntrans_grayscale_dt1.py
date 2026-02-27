@@ -63,10 +63,10 @@ sp_threshold = args.sp_threshold
 
 div_flow = 1
 
-dataset_dir = 'Document/code/research/dataset/Event/mvsec/preprocessed'
-src_file_dir = 'Document/code/research/dataset/Event/mvsec/original'
-# dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
-# src_file_dir = '../../../dataset/Event/mvsec/original'
+# dataset_dir = 'Document/code/research/dataset/Event/mvsec/preprocessed'
+# src_file_dir = 'Document/code/research/dataset/Event/mvsec/original'
+dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
+src_file_dir = '../../../dataset/Event/mvsec/original'
 
 save_dir = 'let_flownet_dt1_output'
 
