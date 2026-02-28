@@ -133,10 +133,10 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                 # Smoothness loss.
                 smoothness_loss = calculate_smooth_loss(flow_predictions)
 
-                # Scaled total loss. Lowered manual scale to 50 to avoid NaN in FP16
+                # 1. Scaled total loss. Lowered manual scale to 50 to avoid NaN in FP16
                 # total_loss = 100 * (20 * photometric_loss + smoothness_loss)
                 
-                # # effective_weight = original_weight / pixels 
+                # 2. effective_weight = original_weight / pixels 
                 # # e.g., 20 / 65536 is roughly 0.0003
                 # photometric_weight = 0.0003
 
@@ -145,7 +145,12 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
 
                 # total_loss = 100 * (photometric_weight * photometric_loss + smoothness_weight * smoothness_loss)
 
-                total_loss = 0.001 * (20 * photometric_loss + smoothness_loss)
+                # 3. total_loss = 0.001 * (20 * photometric_loss + smoothness_loss)
+
+                # TODO: Re-balance for Sum implementations. 
+                # Since both are now sums, 20*20k is ~400k. 
+                # A multiplier of 0.0001 to ensure gradients stay below 65,504, which fits in FP16.
+                total_loss = 0.0001 * (20 * photometric_loss + smoothness_loss)
 
             # Check for NaNs in loss BEFORE backward
             if not torch.isfinite(total_loss):
@@ -347,7 +352,7 @@ def initInputRepresentation(former_inputs_on, former_inputs_off, latter_inputs_o
 def main():
     global args
 
-    scaler = torch.amp.GradScaler("cuda", enabled=True, init_scale=1024.0)
+    scaler = torch.amp.GradScaler("cuda", enabled=True, init_scale=1.0)
 
     workers = 4
     best_EPE = -1
