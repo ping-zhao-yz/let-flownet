@@ -87,7 +87,7 @@ lr = 1e-4
 # TODO: For debugging, set epochs to a smaller number (e.g., 2) to speed up iterations. Change back to 100 for full training.
 epochs = 21
 
-batch_size = 8
+batch_size = 4
 iter_g = 0
 
 
@@ -102,6 +102,10 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     multiscale_weights = [0.1, 0.2, 0.4, 0.8]
     print_freq = 100
 
+    # 1. Define accumulation steps (e.g., 2 steps of size 4 = effective batch size 8)
+    accumulation_steps = 2
+    optimizer.zero_grad() # Ensure gradients are zeroed before the first accumulation
+
     for i_batch, data in enumerate(train_loader, 0):
         former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off, former_gray, latter_gray = data
 
@@ -113,8 +117,6 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
 
             event_data = initInputRepresentation(
                 former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off)
-
-            optimizer.zero_grad() # Clear gradients for every batch
 
             with torch.amp.autocast("cuda", torch.float16):
                 # compute output
@@ -133,10 +135,10 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                 # Smoothness loss.
                 smoothness_loss = calculate_smooth_loss(flow_predictions)
 
-                # 1. Scaled total loss. Lowered manual scale to 50 to avoid NaN in FP16
+                # 1). Scaled total loss. Lowered manual scale to 50 to avoid NaN in FP16
                 # total_loss = 100 * (20 * photometric_loss + smoothness_loss)
                 
-                # 2. effective_weight = original_weight / pixels 
+                # 2). effective_weight = original_weight / pixels 
                 # # e.g., 20 / 65536 is roughly 0.0003
                 # photometric_weight = 0.0003
 
@@ -145,32 +147,37 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
 
                 # total_loss = 100 * (photometric_weight * photometric_loss + smoothness_weight * smoothness_loss)
 
-                # 3. total_loss = 0.001 * (20 * photometric_loss + smoothness_loss)
+                # 3). total_loss = 0.001 * (20 * photometric_loss + smoothness_loss)
 
-                # TODO: Re-balance for Sum implementations. 
-                # Since both are now sums, 20*20k is ~400k. 
-                # A multiplier of 0.0001 to ensure gradients stay below 65,504, which fits in FP16.
-                total_loss = 0.0001 * (20 * photometric_loss + smoothness_loss)
+                # 4). A multiplier of 0.0001 to ensure gradients stay below 65,504, which fits in FP16.
+                # total_loss = 0.0001 * (20 * photometric_loss + smoothness_loss)
+
+                # 2. Normalize loss by accumulation_steps and use the 0.0001 scale for sum-stability
+                total_loss = 0.0001 * (20 * photometric_loss + smoothness_loss) / accumulation_steps
 
             # Check for NaNs in loss BEFORE backward
             if not torch.isfinite(total_loss):
                 print(f"Skipping batch {i_batch} due to NaN loss")
+                optimizer.zero_grad()
                 continue
 
-            # Scale and backward
+            # 3. Scale and accumulate gradients
             scaler.scale(total_loss).backward()
 
-            # ROBUSTNESS: Unscale gradients before clipping
-            scaler.unscale_(optimizer)
+            # 4. Perform optimization step only every N batches
+            if (i_batch + 1) % accumulation_steps == 0 or (i_batch + 1) == len(train_loader):
+                # ROBUSTNESS: Unscale gradients before clipping
+                scaler.unscale_(optimizer)
 
-            # GRADIENT CLIPPING: Prevents NaNs from exploding gradients
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                # GRADIENT CLIPPING: Prevents NaNs from exploding gradients
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-            scaler.step(optimizer)
-            scaler.update()
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
 
-            # Record the actual loss value for logging
-            actual_batch_loss = total_loss.item()
+            # Identify the 'full batch' value for logging
+            actual_batch_loss = total_loss.item() * accumulation_steps
 
             # Log consistently to both destinations
             train_writer.add_scalar('train_loss', actual_batch_loss, iter_g)
@@ -352,6 +359,7 @@ def initInputRepresentation(former_inputs_on, former_inputs_off, latter_inputs_o
 def main():
     global args
 
+    # init_scale=1.0 is essential for sum-based loss stability in AMP
     scaler = torch.amp.GradScaler("cuda", enabled=True, init_scale=1.0)
 
     workers = 4
