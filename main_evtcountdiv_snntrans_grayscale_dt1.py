@@ -152,8 +152,12 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                 # 4). A multiplier of 0.0001 to ensure gradients stay below 65,504, which fits in FP16.
                 # total_loss = 0.0001 * (20 * photometric_loss + smoothness_loss)
 
-                # 2. Normalize loss by accumulation_steps and use the 0.0001 scale for sum-stability
-                total_loss = 0.0001 * (20 * photometric_loss + smoothness_loss) / accumulation_steps
+                # 5). Normalize loss by accumulation_steps and use the 0.0001 scale for sum-stability
+                # total_loss = 0.0001 * (20 * photometric_loss + smoothness_loss) / accumulation_steps
+
+                # 2. Normalize loss by accumulation_steps
+                # Scale the multipliers to account for the mean/sum difference
+                total_loss = 0.001 * (20 * photometric_loss + 100 * smoothness_loss) / accumulation_steps
 
             # Check for NaNs in loss BEFORE backward
             if not torch.isfinite(total_loss):

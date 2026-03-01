@@ -19,10 +19,10 @@ def calculate_smooth_loss(flow_predictions):
         dx2, dxdy = gradient(dx)
         dydx, dy2 = gradient(dy)
         loss += (
-            dx2.abs().sum() 
-            + dxdy.abs().sum() 
-            + dydx.abs().sum() 
-            + dy2.abs().sum()
+            dx2.abs().mean() 
+            + dxdy.abs().mean() 
+            + dydx.abs().mean() 
+            + dy2.abs().mean()
         ) * weights[i]
 
     return loss
