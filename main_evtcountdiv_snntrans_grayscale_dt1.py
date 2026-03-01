@@ -70,7 +70,7 @@ src_file_dir = '/media/pzha9599/Document/code/research/dataset/Event/mvsec/origi
 
 save_dir = 'let_flownet_dt1_output'
 
-train_env = 'outdoor_day1'
+train_env = 'outdoor_day2'
 test_env = 'indoor_flying1'
 
 train_dir = os.path.join(dataset_dir, train_env)
@@ -85,7 +85,7 @@ arch = "let_flownet"
 lr = 2e-4
 
 # TODO: For debugging, set epochs to a smaller number (e.g., 2) to speed up iterations. Change back to 100 for full training.
-epochs = 21
+epochs = 100
 
 batch_size = 4
 iter_g = 0
