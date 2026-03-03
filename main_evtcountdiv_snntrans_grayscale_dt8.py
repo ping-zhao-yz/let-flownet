@@ -94,7 +94,7 @@ def train(train_loader, model, optimizer, epoch, train_writer):
     # switch to train mode
     model.train()
 
-    multiscale_weights = [0.1, 0.2, 0.4, 0.8]
+    multiscale_weights = [0.01, 0.05, 0.1, 1.0]
     print_freq = 100
 
     for i_batch, data in enumerate(train_loader, 0):

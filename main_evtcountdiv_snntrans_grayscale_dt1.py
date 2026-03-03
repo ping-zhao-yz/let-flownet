@@ -70,7 +70,7 @@ src_file_dir = '/media/pzha9599/Document/code/research/dataset/Event/mvsec/origi
 
 save_dir = 'let_flownet_dt1_output'
 
-train_env = 'outdoor_day2'
+train_env = 'outdoor_day1'
 test_env = 'indoor_flying1'
 
 train_dir = os.path.join(dataset_dir, train_env)
@@ -85,7 +85,7 @@ arch = "let_flownet"
 lr = 2e-4
 
 # TODO: For debugging, set epochs to a smaller number (e.g., 2) to speed up iterations. Change back to 100 for full training.
-epochs = 100
+epochs = 21
 
 batch_size = 4
 iter_g = 0
@@ -99,7 +99,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     # switch to train mode
     model.train()
 
-    multiscale_weights = [0.1, 0.2, 0.4, 0.8]
+    multiscale_weights = [0.01, 0.05, 0.1, 1.0]
     print_freq = 100
 
     # 1. Define accumulation steps (e.g., 2 steps of size 4 = effective batch size 8)
