@@ -63,8 +63,10 @@ sp_threshold = args.sp_threshold
 
 div_flow = 1
 
-dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
-src_file_dir = '../../../dataset/Event/mvsec/original'
+# dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
+# src_file_dir = '../../../dataset/Event/mvsec/original'
+dataset_dir = '/media/pzha9599/Document/code/research/dataset/Event/mvsec/preprocessed'
+src_file_dir = '/media/pzha9599/Document/code/research/dataset/Event/mvsec/original'
 
 save_dir = 'spiket_flownet_snn_lif_trans_dt1_output'
 
@@ -82,7 +84,7 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 arch = "spiket_flownet_snn_lif_trans"
 
 lr = 5e-5
-epochs = 100
+epochs = 30
 batch_size = 4
 iter_g = 0
 
