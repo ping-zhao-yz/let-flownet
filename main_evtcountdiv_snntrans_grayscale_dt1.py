@@ -63,12 +63,14 @@ sp_threshold = args.sp_threshold
 
 div_flow = 1
 
-dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
-src_file_dir = '../../../dataset/Event/mvsec/original'
+# dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
+# src_file_dir = '../../../dataset/Event/mvsec/original'
+dataset_dir = '/media/pzha9599/Document/code/research/dataset/Event/mvsec/preprocessed'
+src_file_dir = '/media/pzha9599/Document/code/research/dataset/Event/mvsec/original'
 
 save_dir = 'let_flownet_dt1_output'
 
-train_env = 'outdoor_day2'
+train_env = 'outdoor_day1'
 test_env = 'indoor_flying1'
 
 train_dir = os.path.join(dataset_dir, train_env)
@@ -313,7 +315,7 @@ def main():
 
     workers = 4
     best_EPE = -1
-    evaluate_interval = 5
+    evaluate_interval = 3
 
     val_fail_times_max = 5
     val_fail_times = 0
