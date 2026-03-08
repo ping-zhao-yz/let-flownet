@@ -315,7 +315,7 @@ def main():
     best_EPE = -1
     evaluate_interval = 3
 
-    val_fail_times_max = 5
+    val_fail_times_max = 8
     val_fail_times = 0
 
     save_path = '{},{},epochs{},bat{},lr{}'.format(
