@@ -84,7 +84,7 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 arch = "spiket_flownet_snn_lif_trans"
 
 lr = 5e-5
-epochs = 30
+epochs = 50
 batch_size = 4
 iter_g = 0
 
