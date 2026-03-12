@@ -16,12 +16,12 @@ from util.loss_util import AverageMeter
 from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
 from datasets.evt_count_divided.dataset_dtx import DatasetTest, DatasetTrain
-from models import spiket_flownet_snn_lif_trans
+from models import let_flownet
 from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss_upsample_single
 from loss.photometric_loss_backward import photometric_loss_backward_single
 
 
-parser = argparse.ArgumentParser(description='spiket_flownet_snn_lif_trans training on several datasets',
+parser = argparse.ArgumentParser(description='let_flownet training on several datasets',
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
 parser.add_argument('--pretrained', dest='pretrained', default=None,
@@ -66,7 +66,7 @@ div_flow = 1
 dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
 src_file_dir = '../../../dataset/Event/mvsec/original'
 
-save_dir = 'spiket_flownet_snn_lif_trans_dt8_output'
+save_dir = 'let_flownet_dt8_output'
 
 train_env = 'outdoor_day2'
 test_env = 'indoor_flying1'
@@ -78,7 +78,7 @@ train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
 test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
 test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
-arch = "spiket_flownet_snn_lif_trans"
+arch = "let_flownet"
 
 lr = 5e-5
 epochs = 100
@@ -350,7 +350,7 @@ def main():
         network_data = None
         print(f"=> creating model '{arch}'")
 
-    model = spiket_flownet_snn_lif_trans.__dict__[arch](args, device, network_data).to(device)
+    model = let_flownet.__dict__[arch](args, device, network_data).to(device)
     model = torch.nn.DataParallel(model).to(device)
     cudnn.benchmark = True
 
