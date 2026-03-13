@@ -70,8 +70,8 @@ src_file_dir = '/media/pzha9599/Document/code/research/dataset/Event/mvsec/origi
 
 save_dir = 'let_flownet_dt1_output'
 
-# train_env = 'outdoor_day2'
-train_env = 'outdoor_day1'
+train_env = 'outdoor_day2'
+# train_env = 'outdoor_day1'
 test_env = 'indoor_flying1'
 
 train_dir = os.path.join(dataset_dir, train_env)
@@ -403,6 +403,10 @@ def main():
                               num_workers=workers)
 
     for epoch in range(args.start_epoch, epochs):
+        
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Learning Rate: {current_lr:.6f}")
+
         train_loss = train(train_loader, model, optimizer, epoch, train_writer)
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
 
