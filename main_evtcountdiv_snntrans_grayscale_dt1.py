@@ -158,6 +158,7 @@ def validate(test_loader, model, epoch, output_writers):
     AEE_sum_sum = 0.
     AEE_sum_gt = 0.
     AEE_sum_sum_gt = 0.
+    total_points = 0.
     percent_Outlier_sum = 0.
     iters = 0.
     scale = 1
@@ -263,6 +264,7 @@ def validate(test_loader, model, epoch, output_writers):
             AEE_sum_sum_gt = AEE_sum_sum_gt + AEE_sum_temp_gt
 
             percent_Outlier_sum += percent_Outlier
+            total_points += n_points
 
             if i_batch < len(output_writers):  # log first output of first batches
                 output_writers[i_batch].add_image('SpikeT FlowNet Outputs', flow2rgb(
@@ -281,8 +283,8 @@ def validate(test_loader, model, epoch, output_writers):
 
     print('================ Overall Validation Outcome ===================')
     print(f'Time: {now}, epoch: {epoch}')
-    print('Mean AEE: {:.3f}, sum AEE: {:.2f}, Mean AEE_gt: {:.2f}, sum AEE_gt: {:.2f}, Mean %Outlier: {:.3f}, # pts: {:.2f}'
-        .format(AEE_sum / iters, AEE_sum_sum / iters, AEE_sum_gt / iters, AEE_sum_sum_gt / iters, percent_Outlier_sum / iters, n_points))
+    print('Mean AEE: {:.3f}, sum AEE: {:.2f}, Mean AEE_gt: {:.2f}, sum AEE_gt: {:.2f}, Mean %Outlier: {:.3f}, # Mean pts: {:.2f}'
+        .format(AEE_sum / iters, AEE_sum_sum / iters, AEE_sum_gt / iters, AEE_sum_sum_gt / iters, percent_Outlier_sum / iters, total_points / iters))
     print('===============================================================')
 
     gt_temp = None
