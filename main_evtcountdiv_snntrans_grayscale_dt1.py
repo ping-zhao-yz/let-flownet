@@ -70,9 +70,9 @@ src_file_dir = '/media/pzha9599/Document/code/research/dataset/Event/mvsec/origi
 
 save_dir = 'let_flownet_dt1_output'
 
-train_env = 'outdoor_day2'
-# train_env = 'outdoor_day1'
-test_env = 'indoor_flying1'
+# train_env = 'outdoor_day2'
+train_env = 'outdoor_day1'
+test_env = 'indoor_flying2'
 
 train_dir = os.path.join(dataset_dir, train_env)
 test_dir = os.path.join(dataset_dir, test_env)
