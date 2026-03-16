@@ -166,6 +166,8 @@ def estimate_corresponding_gt_flow(
 
     # Each gt flow at timestamp gt_timestamps[gt_iter] represents the displacement between gt_iter and gt_iter+1.
     gt_iter = np.searchsorted(gt_timestamps, start_time, side="right") - 1
+    gt_iter = max(0, gt_iter) # Ensure we don't grab the last frame
+
     gt_dt = gt_timestamps[gt_iter + 1] - gt_timestamps[gt_iter]
     x_flow = np.squeeze(x_flow_in[gt_iter, ...])
     y_flow = np.squeeze(y_flow_in[gt_iter, ...])

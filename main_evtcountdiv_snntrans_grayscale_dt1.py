@@ -255,8 +255,10 @@ def validate(test_loader, model, epoch, output_writers):
 
             gt_flow = gt_flow[yoff: -yoff, xoff: -xoff, :]
 
+            is_car_flag = 'outdoor' in test_env
+            
             AEE, percent_Outlier, n_points, AEE_sum_temp, AEE_gt, AEE_sum_temp_gt = flow_error_dense(
-                gt_flow, pred_flow, (torch.sum(torch.sum(torch.sum(event_data, dim=0), dim=0), dim=2)).cpu(), is_car=False)
+                gt_flow, pred_flow, (torch.sum(torch.sum(torch.sum(event_data, dim=0), dim=0), dim=2)).cpu(), is_car=is_car_flag)
 
             AEE_sum = AEE_sum + div_flow * AEE
             AEE_sum_sum = AEE_sum_sum + AEE_sum_temp
