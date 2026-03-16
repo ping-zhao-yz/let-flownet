@@ -72,8 +72,8 @@ save_dir = 'let_flownet_dt1_output'
 
 train_env = 'outdoor_day2'
 # train_env = 'outdoor_day1'
-# test_env = 'indoor_flying3'
-test_env = 'outdoor_day1'
+test_env = 'indoor_flying2'
+# test_env = 'outdoor_day1'
 
 train_dir = os.path.join(dataset_dir, train_env)
 test_dir = os.path.join(dataset_dir, test_env)
@@ -256,7 +256,7 @@ def validate(test_loader, model, epoch, output_writers):
             gt_flow = gt_flow[yoff: -yoff, xoff: -xoff, :]
 
             is_car_flag = 'outdoor' in test_env
-            
+
             AEE, percent_Outlier, n_points, AEE_sum_temp, AEE_gt, AEE_sum_temp_gt = flow_error_dense(
                 gt_flow, pred_flow, (torch.sum(torch.sum(torch.sum(event_data, dim=0), dim=0), dim=2)).cpu(), is_car=is_car_flag)
 
