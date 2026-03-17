@@ -49,7 +49,7 @@ parser.add_argument('--mixed_precision', action='store_true',
 
 parser.add_argument('--dropout', type=float, default=0.0)
 
-parser.add_argument('--dt', type=int, default=1, help='time interval (1, 4, or 8')
+parser.add_argument('--dt', type=int, default=1, help='time interval (1, 4, or 8)')
 parser.add_argument('--sp_threshold', type=float, default=0.75, help='spike threshold')
 
 args = parser.parse_args()
@@ -408,7 +408,7 @@ def main():
                               num_workers=workers)
 
     for epoch in range(args.start_epoch, epochs):
-        
+
         current_lr = optimizer.param_groups[0]['lr']
         print(f"Learning Rate: {current_lr:.6f}")
 

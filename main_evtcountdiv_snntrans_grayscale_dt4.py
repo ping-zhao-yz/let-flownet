@@ -41,8 +41,8 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
 
 parser.add_argument('--tau', default=20*1e-3, help='time constant for Leaky Integrate and Fire (LIF) model')
 
-parser.add_argument('--num_enc_layers', default=4, help='number of transformer encoder layers')
-parser.add_argument('--num_dec_layers', default=4, help='number of transformer decoder layers')
+parser.add_argument('--num_enc_layers', default=2, help='number of transformer encoder layers')
+parser.add_argument('--num_dec_layers', default=2, help='number of transformer decoder layers')
 
 parser.add_argument('--mixed_precision', action='store_true',
                     help='use mixed precision')
@@ -63,13 +63,17 @@ sp_threshold = args.sp_threshold
 
 div_flow = 1
 
-dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
-src_file_dir = '../../../dataset/Event/mvsec/original'
+# dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
+# src_file_dir = '../../../dataset/Event/mvsec/original'
+dataset_dir = '/media/pzha9599/Document/code/research/dataset/Event/mvsec/preprocessed'
+src_file_dir = '/media/pzha9599/Document/code/research/dataset/Event/mvsec/original'
 
 save_dir = 'let_flownet_dt4_output'
 
-train_env = 'outdoor_day2'
+# train_env = 'outdoor_day2'
+train_env = 'outdoor_day1'
 test_env = 'indoor_flying1'
+# test_env = 'outdoor_day1'
 
 train_dir = os.path.join(dataset_dir, train_env)
 test_dir = os.path.join(dataset_dir, test_env)
@@ -80,9 +84,9 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
 arch = "let_flownet"
 
-lr = 5e-5
+lr = 1e-4
 epochs = 100
-batch_size = 4
+batch_size = 8
 iter_g = 0
 
 
@@ -155,6 +159,7 @@ def validate(test_loader, model, epoch, output_writers):
     AEE_sum_sum = 0.
     AEE_sum_gt = 0.
     AEE_sum_sum_gt = 0.
+    total_points = 0.
     percent_Outlier_sum = 0.
     iters = 0.
     scale = 1
@@ -250,8 +255,10 @@ def validate(test_loader, model, epoch, output_writers):
 
             gt_flow = gt_flow[yoff: -yoff, xoff: -xoff, :]
 
+            is_car_flag = 'outdoor' in test_env
+
             AEE, percent_Outlier, n_points, AEE_sum_temp, AEE_gt, AEE_sum_temp_gt = flow_error_dense(
-                gt_flow, pred_flow, (torch.sum(torch.sum(torch.sum(event_data, dim=0), dim=0), dim=2)).cpu(), is_car=False)
+                gt_flow, pred_flow, (torch.sum(torch.sum(torch.sum(event_data, dim=0), dim=0), dim=2)).cpu(), is_car=is_car_flag)
 
             AEE_sum = AEE_sum + div_flow * AEE
             AEE_sum_sum = AEE_sum_sum + AEE_sum_temp
@@ -260,6 +267,7 @@ def validate(test_loader, model, epoch, output_writers):
             AEE_sum_sum_gt = AEE_sum_sum_gt + AEE_sum_temp_gt
 
             percent_Outlier_sum += percent_Outlier
+            total_points += n_points
 
             if i_batch < len(output_writers):  # log first output of first batches
                 output_writers[i_batch].add_image('SpikeT FlowNet Outputs', flow2rgb(
@@ -278,8 +286,8 @@ def validate(test_loader, model, epoch, output_writers):
 
     print('================ Overall Validation Outcome ===================')
     print(f'Time: {now}, epoch: {epoch}')
-    print('Mean AEE: {:.3f}, sum AEE: {:.2f}, Mean AEE_gt: {:.2f}, sum AEE_gt: {:.2f}, Mean %Outlier: {:.3f}, # pts: {:.2f}'
-        .format(AEE_sum / iters, AEE_sum_sum / iters, AEE_sum_gt / iters, AEE_sum_sum_gt / iters, percent_Outlier_sum / iters, n_points))
+    print('Mean AEE: {:.3f}, sum AEE: {:.2f}, Mean AEE_gt: {:.2f}, sum AEE_gt: {:.2f}, Mean %Outlier: {:.3f}, # Mean pts: {:.2f}'
+        .format(AEE_sum / iters, AEE_sum_sum / iters, AEE_sum_gt / iters, AEE_sum_sum_gt / iters, percent_Outlier_sum / iters, total_points / iters))
     print('===============================================================')
 
     gt_temp = None
@@ -312,7 +320,7 @@ def main():
     best_EPE = -1
     evaluate_interval = 3
 
-    val_fail_times_max = 5
+    val_fail_times_max = 8
     val_fail_times = 0
 
     save_path = '{},{},epochs{},bat{},lr{}'.format(
@@ -370,8 +378,17 @@ def main():
         optimizer = torch.optim.SGD(
             param_groups, lr, momentum=0.9)
 
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer, [5, 10, 20, 30, 40, 50, 70, 90], gamma=0.7)
+    # Warmup for first 3 epochs, then multistep decay
+    warmup_epochs = 3
+    scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs
+    )
+    scheduler_multistep = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer, milestones=[5, 10, 20, 30, 40, 50, 70, 90], gamma=0.7
+    )
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer, schedulers=[scheduler_warmup, scheduler_multistep], milestones=[warmup_epochs]
+    )
 
     co_transform = transforms.Compose([
         transforms.ToPILImage(),
@@ -391,6 +408,10 @@ def main():
                               num_workers=workers)
 
     for epoch in range(args.start_epoch, epochs):
+
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Learning Rate: {current_lr:.6f}")
+
         train_loss = train(train_loader, model, optimizer, epoch, train_writer)
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
 
