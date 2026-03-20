@@ -422,13 +422,15 @@ def main():
 
             is_best = EPE < best_EPE
             best_EPE = min(EPE, best_EPE)
+
+            filename = f'checkpoint_epoch_{epoch + 1}_{EPE}.pth.tar'
             save_checkpoint({
                 'epoch': epoch + 1,
                 'arch': arch,
                 'state_dict': model.module.state_dict(),
                 'best_EPE': best_EPE,
                 'div_flow': div_flow
-            }, is_best, save_path)
+            }, is_best, save_path, filename=filename)
 
 
 if __name__ == '__main__':
