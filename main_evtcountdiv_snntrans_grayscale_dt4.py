@@ -72,8 +72,8 @@ save_dir = 'let_flownet_dt4_output'
 
 train_env = 'outdoor_day2'
 # train_env = 'outdoor_day1'
-test_env = 'indoor_flying3'
-# test_env = 'outdoor_day1'
+# test_env = 'indoor_flying3'
+test_env = 'outdoor_day1'
 
 train_dir = os.path.join(dataset_dir, train_env)
 test_dir = os.path.join(dataset_dir, test_env)
