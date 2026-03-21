@@ -113,7 +113,7 @@ class DatasetTrain(Dataset):
 
 
 class DatasetTest(Dataset):
-    def __init__(self, dt, dataset_file, test_dir):
+    def __init__(self, dt, dataset_file, test_dir, gt_start_time=0):
         self.xoff = 45
         self.yoff = 2
 
@@ -129,9 +129,15 @@ class DatasetTest(Dataset):
         self.length = d_set['davis']['left']['image_raw'].shape[0]
         d_set = None
 
+        self.gt_start_time = gt_start_time
+
     def __getitem__(self, index):
         event_0 = np.zeros((256, 256, self.range))
         gray_0 = np.zeros((self.gray_image_ts[index].shape))
+
+        # Skip if timestamp is before ground truth starts
+        if self.gray_image_ts[index] < self.gt_start_time:
+            return event_0, event_0, event_0, event_0, gray_0, gray_0
 
         if (index + 20 < self.length) and (index > 20):
             aa = np.zeros((256, 256, self.range), dtype=np.uint8)

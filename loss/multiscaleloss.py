@@ -158,6 +158,12 @@ Inputs:
 def estimate_corresponding_gt_flow(
     x_flow_in, y_flow_in, gt_timestamps, start_time, end_time
 ):
+    # Only evaluate within the bounds of the Ground Truth timestamps
+    start_time = max(start_time, gt_timestamps[0])
+    end_time = min(end_time, gt_timestamps[-1])
+    if start_time >= end_time:
+        return np.zeros_like(x_flow_in[0]), np.zeros_like(y_flow_in[0])
+    
     x_flow_in = np.array(x_flow_in, dtype=np.float64)
     y_flow_in = np.array(y_flow_in, dtype=np.float64)
     gt_timestamps = np.array(gt_timestamps, dtype=np.float64)

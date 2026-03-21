@@ -315,6 +315,10 @@ def main():
     val_fail_times_max = 5
     val_fail_times = 0
 
+    d_label = h5py.File(test_gt_file, 'r')
+    gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
+    d_label.close()
+
     save_path = '{},{},epochs{},bat{},lr{}'.format(
         arch,
         args.solver,
@@ -335,7 +339,7 @@ def main():
         output_writers.append(SummaryWriter(
             os.path.join(save_path, 'test', str(i))))
 
-    Test_dataset = DatasetTest(args.dt, test_src_file, test_dir)
+    Test_dataset = DatasetTest(args.dt, test_src_file, test_dir, gt_start_time=gt_start)
     test_loader = DataLoader(dataset=Test_dataset,
                              batch_size=1,
                              shuffle=False,
