@@ -167,6 +167,10 @@ def validate(test_loader, model, epoch, output_writers):
     for i_batch, data in enumerate(test_loader, 0):
         former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off, ts_f, ts_l = data
 
+        # Only for outdoor_day1, limit to 800 frames to match Spike-FlowNet
+        if 'outdoor_day1' in test_env and i_batch >= 800:
+            break
+        
         if torch.sum(former_inputs_on + former_inputs_off) > 0:
             event_data = initInputRepresentation(
                 former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off)
