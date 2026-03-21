@@ -54,7 +54,7 @@ def smooth_loss_upsample(flow_predictions):
 
     return loss
 
-def smooth_loss_upsample_single(flow):
+def smooth_loss_single(flow):
     def gradient(pred):
         D_dy = pred[:, :, 1:] - pred[:, :, :-1]
         D_dx = pred[:, :, :, 1:] - pred[:, :, :, :-1]

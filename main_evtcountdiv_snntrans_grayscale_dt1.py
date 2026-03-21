@@ -17,7 +17,7 @@ from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
 from datasets.evt_count_divided.dataset_dt1 import DatasetTest, DatasetTrain
 from models import let_flownet
-from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss_upsample_single
+from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss_single
 from loss.photometric_loss_backward import photometric_loss_backward_single
 
 
@@ -120,7 +120,7 @@ def train(train_loader, model, optimizer, epoch, train_writer):
                 event_data, 4), flow_predictions, device, print_details, weights=multiscale_weights)
 
             # Smoothness loss.
-            smoothness_loss = smooth_loss_upsample_single(flow_predictions)
+            smoothness_loss = smooth_loss_single(flow_predictions)
 
             # total_loss
             loss = photometric_loss + smoothness_loss
