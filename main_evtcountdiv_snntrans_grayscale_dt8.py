@@ -52,6 +52,9 @@ parser.add_argument('--dropout', type=float, default=0.0)
 parser.add_argument('--dt', type=int, default=8, help='time interval (1, 4, or 8)')
 parser.add_argument('--sp_threshold', type=float, default=0.5, help='spike threshold')
 
+parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
+parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
+
 args = parser.parse_args()
 
 # Initializations
@@ -68,8 +71,8 @@ src_file_dir = '../../../dataset/Event/mvsec/original'
 
 save_dir = 'let_flownet_dt8_output'
 
-train_env = 'outdoor_day2'
-test_env = 'indoor_flying1'
+train_env = args.train_env
+test_env = args.test_env
 
 train_dir = os.path.join(dataset_dir, train_env)
 test_dir = os.path.join(dataset_dir, test_env)
