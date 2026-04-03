@@ -68,8 +68,8 @@ div_flow = 1
 
 # dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
 # src_file_dir = '../../../dataset/Event/mvsec/original'
-dataset_dir = '/media/pzha9599/Document/code/research/dataset/Event/mvsec/preprocessed'
-src_file_dir = '/media/pzha9599/Document/code/research/dataset/Event/mvsec/original'
+dataset_dir = '/media/windows_data/code/research/dataset/Event/mvsec/preprocessed'
+src_file_dir = '/media/windows_data/code/research/dataset/Event/mvsec/original'
 
 save_dir = 'let_flownet_dt1_output'
 
