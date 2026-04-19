@@ -39,7 +39,7 @@ parser.add_argument('--norm', default='BN',
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 
-parser.add_argument('--tau', default=80*1e-3, help='time constant for Leaky Integrate and Fire (LIF) model')
+parser.add_argument('--tau', default=100e-3, help='time constant for Leaky Integrate and Fire (LIF) model')
 
 parser.add_argument('--num_enc_layers', default=2, help='number of transformer encoder layers')
 parser.add_argument('--num_dec_layers', default=2, help='number of transformer decoder layers')
