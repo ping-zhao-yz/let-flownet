@@ -104,9 +104,12 @@ def train(train_loader, model, optimizer, epoch, train_writer):
             flow_predictions = model(event_data, image_resize, sp_threshold)
 
             # Photometric loss (sum along dim=4 to get the dense spatial map mask)
+            # Sum over both channels (dim=1) and time (dim=4) to get a flat [Batch, H, W] spatial mask
+            event_mask = torch.sum(event_data, dim=(1, 4)) 
+
             photometric_loss = photometric_loss_backward_single(
                 former_gray[:, 0, :, :].to(device), latter_gray[:, 0, :, :].to(device), 
-                torch.sum(event_data, dim=4), flow_predictions, device, print_details, weights=multiscale_weights)
+                event_mask, flow_predictions, device, print_details, weights=multiscale_weights)
 
             # Smoothness loss
             smoothness_loss = smooth_loss_single(flow_predictions)
@@ -287,7 +290,7 @@ def validate(test_loader, model, epoch, output_writers):
 def main():
     global args
 
-    workers = 4
+    workers = 8
     best_EPE = -1
     evaluate_interval = 3
 

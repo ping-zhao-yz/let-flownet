@@ -50,7 +50,6 @@ class Let_Flownet_EvtCount(BaseModel):
 
         # Transformers
         norm = self.args.norm
-        self.head = ConvLayer(in_channels=4, out_channels=64, kernel_size=5, stride=1, padding=2, norm=norm)
 
         self.position_embedding = build_position_encoding('sine', 512)
         self.split0 = nn.Unfold(kernel_size=1, stride=1, padding=0)
@@ -171,10 +170,8 @@ class Let_Flownet_EvtCount(BaseModel):
         """
 
         #************* path to transformer
-        # TODO: 5 - verify the impact of using the event at the first time slot
-        head = self.head(input[:, :, :, :, 0])
-        
-        n, c, H, W = head.size()
+        # Extract spatial dimensions directly from the SNN features
+        n, c, H, W = blocks[-4].size()
 
         # Small -> Big
         #******** scale 0
