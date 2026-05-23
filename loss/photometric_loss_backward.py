@@ -5,13 +5,16 @@ import torch.nn as nn
 
 
 """
-Robust Charbonnier loss.
+Robust Charbonnier loss (Updated to support spatial masking).
 """
-def charbonnier_loss(delta, alpha=0.45, epsilon=1e-3):
-    loss = torch.sum(
-        torch.pow(torch.mul(delta, delta) + torch.mul(epsilon, epsilon), alpha)
-    )
-    return loss
+def charbonnier_loss(delta, alpha=0.45, epsilon=1e-3, mask=None):
+    loss = torch.pow(torch.mul(delta, delta) + torch.mul(epsilon, epsilon), alpha)
+    
+    # If a mask is provided, zero out the loss in regions without events
+    if mask is not None:
+        loss = loss * mask
+        
+    return torch.sum(loss)
 
 
 """
@@ -53,7 +56,7 @@ def photometric_loss_backward_multiscale(prev_images_temp, next_images_temp, eve
     next_images_base = next_images_temp.unsqueeze(1)
     
     # Expand event mask for interpolation
-    # event_mask_base = event_images.unsqueeze(1).float()
+    event_mask_base = event_images.unsqueeze(1).float()
 
     total_photometric_loss = 0.0
     loss_weight_sum = 0.0
@@ -73,12 +76,18 @@ def photometric_loss_backward_multiscale(prev_images_temp, next_images_temp, eve
             next_images_base, size=(height, width), mode='bilinear', align_corners=False
         )
         
+        # Resize mask using nearest neighbor to preserve hard 0/1 boundaries
+        event_mask_scaled = nn.functional.interpolate(
+            event_mask_base, size=(height, width), mode='nearest'
+        )
+        valid_mask = (event_mask_scaled > 0).float()
+
         #3. Calculate Loss
         next_images_warped = backward_warp(next_images_scaled, flow)
         error_temp_backward = next_images_warped - prev_images_scaled
         
         # Pass the mask to charbonnier to ignore blank regions
-        photometric_loss_scale = charbonnier_loss(error_temp_backward)
+        photometric_loss_scale = charbonnier_loss(error_temp_backward, mask=valid_mask)
 
         if print_details:
             print(f'photometric_loss_backward (scale {i}): {photometric_loss_scale.item()}')
@@ -106,6 +115,7 @@ def photometric_loss_backward(prev_images_temp, next_images_temp, event_images, 
     # 1. Expand dimensions from [Batch, H, W] to [Batch, 1, H, W]
     prev_images_base = prev_images_temp.unsqueeze(1)
     next_images_base = next_images_temp.unsqueeze(1)
+    event_mask_base = event_images.unsqueeze(1).float()
 
     # 2. Resize directly on the GPU using PyTorch
     prev_images_scaled = nn.functional.interpolate(
@@ -115,12 +125,18 @@ def photometric_loss_backward(prev_images_temp, next_images_temp, event_images, 
         next_images_base, size=(height, width), mode='bilinear', align_corners=False
     )
     
+    # Resize mask using nearest neighbor
+    event_mask_scaled = nn.functional.interpolate(
+        event_mask_base, size=(height, width), mode='nearest'
+    )
+    valid_mask = (event_mask_scaled > 0).float()
+
     # 3. Calculate Loss
     next_images_warped = backward_warp(next_images_scaled, flow)
     error_temp_backward = next_images_warped - prev_images_scaled
     
     # Pass the mask to charbonnier to ignore blank regions
-    photometric_loss = charbonnier_loss(error_temp_backward)
+    photometric_loss = charbonnier_loss(error_temp_backward, mask=valid_mask)
 
     if print_details:
         print('photometric_loss: {0}'.format(photometric_loss.item()))

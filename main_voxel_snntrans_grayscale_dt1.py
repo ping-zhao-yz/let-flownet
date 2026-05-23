@@ -9,9 +9,11 @@ import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim
 import torchvision.transforms as transforms
+
 from datetime import datetime
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
+from torchvision.transforms import InterpolationMode
 from util.loss_util import AverageMeter
 from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
@@ -173,11 +175,12 @@ def validate(test_loader, model, epoch, output_writers):
             output = model(event_data, image_resize, sp_threshold)
             output_temp = output.cpu()
 
-            pred_flow = np.zeros((image_resize, image_resize, 2), dtype=np.float32)
-            pred_flow[:, :, 0] = cv2.resize(np.array(
-                output_temp[0, 0, :, :]), (image_resize, image_resize), interpolation=cv2.INTER_LINEAR)
-            pred_flow[:, :, 1] = cv2.resize(np.array(
-                output_temp[0, 1, :, :]), (image_resize, image_resize), interpolation=cv2.INTER_LINEAR)
+            # Interpolate natively in PyTorch
+            output_resized = torch.nn.functional.interpolate(
+                output_temp, size=(image_resize, image_resize), mode='bilinear', align_corners=False
+            )
+            # Permute from [Channels, H, W] to [H, W, Channels] and convert to clean numpy
+            pred_flow = output_resized[0].permute(1, 2, 0).numpy()
 
             u_gt_all = np.array(gt_temp[:, 0, :, :])
             v_gt_all = np.array(gt_temp[:, 1, :, :])
@@ -193,7 +196,8 @@ def validate(test_loader, model, epoch, output_writers):
 
             #   ----------- Visualization
             if epoch < 0 and not torch.cuda.is_available():
-                spike_image = np.array(mask_temp_np, dtype=np.uint8) * 255
+                # Clean conversion to uint8
+                spike_image = mask_temp_np.astype(np.uint8) * 255
                 cv2.imshow('Spike Image', spike_image)
 
                 gray = cv2.resize(
@@ -201,10 +205,13 @@ def validate(test_loader, model, epoch, output_writers):
                 cv2.imshow('Gray Image', cv2.cvtColor(
                     gray, cv2.COLOR_BGR2RGB))
 
-                out_temp = np.array(output_temp.cpu().detach())
-                x_flow = cv2.resize(np.array(out_temp[0, 0, :, :]), (
+                # Extract to a clean NumPy array ONCE
+                out_temp = output_temp.cpu().detach().numpy()
+                
+                # Directly slice the NumPy array (no np.array() wrappers)
+                x_flow = cv2.resize(out_temp[0, 0, :, :], (
                     scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
-                y_flow = cv2.resize(np.array(out_temp[0, 1, :, :]), (
+                y_flow = cv2.resize(out_temp[0, 1, :, :], (
                     scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
                 rgb_flow = flow_viz_np(x_flow, y_flow)
                 cv2.imshow('Predicted Flow', cv2.cvtColor(
@@ -218,9 +225,9 @@ def validate(test_loader, model, epoch, output_writers):
                 cv2.imshow('GT Flow', cv2.cvtColor(
                     gt_flow_large, cv2.COLOR_BGR2RGB))
 
-                x_flow_masked = cv2.resize(np.array(out_temp[0, 0, :, :] * mask_temp_np), (
+                x_flow_masked = cv2.resize(out_temp[0, 0, :, :] * mask_temp_np, (
                     scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
-                y_flow_masked = cv2.resize(np.array(out_temp[0, 1, :, :] * mask_temp_np), (
+                y_flow_masked = cv2.resize(out_temp[0, 1, :, :] * mask_temp_np, (
                     scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
                 rgb_flow_masked = flow_viz_np(x_flow_masked, y_flow_masked)
                 cv2.imshow('Masked Predicted Flow', cv2.cvtColor(
@@ -290,7 +297,7 @@ def validate(test_loader, model, epoch, output_writers):
 def main():
     global args
 
-    workers = 8
+    workers = 16
     best_EPE = -1
     evaluate_interval = 3
 
@@ -369,13 +376,11 @@ def main():
     )
 
     co_transform = transforms.Compose([
-        transforms.ToPILImage(),
         transforms.RandomHorizontalFlip(0.5),
         transforms.RandomVerticalFlip(0.5),
-        transforms.RandomRotation(30),
+        transforms.RandomRotation(30, interpolation=InterpolationMode.BILINEAR),
         transforms.RandomResizedCrop((256, 256), scale=(
-            0.5, 1.0), ratio=(0.75, 1.3333333333333333), interpolation=2),
-        transforms.ToTensor(),
+            0.5, 1.0), ratio=(0.75, 1.3333333333333333), interpolation=InterpolationMode.BILINEAR),
     ])
 
     Train_dataset = DatasetTrain(

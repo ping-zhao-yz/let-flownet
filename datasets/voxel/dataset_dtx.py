@@ -79,41 +79,34 @@ class DatasetTrain(Dataset):
             gray_l = np.uint8(gray_l_raw)
 
             if self.transform:
-                seed = np.random.randint(2147483647)
+                # 1. Flatten the 4D voxel tensor [2, 256, 256, num_bins] into 3D [2*num_bins, 256, 256]
+                voxel_flat = voxel_tensor.permute(0, 3, 1, 2).reshape(2 * self.num_bins, 256, 256)
                 
-                # Pre-crop the images to 256x256 so spatial transforms match the pre-cropped event grid
+                # 2. Ensure Gray images are [1, 256, 256]
                 if gray_f.shape == (260, 346):
                     gray_f = gray_f[2:258, 45:301]
                     gray_l = gray_l[2:258, 45:301]
                 
-                voxel_transformed = torch.zeros_like(voxel_tensor)
+                gray_f_t = torch.from_numpy(gray_f).float().unsqueeze(0)
+                gray_l_t = torch.from_numpy(gray_l).float().unsqueeze(0)
                 
-                # Apply transformations consistently to each time bin and polarity
-                for c in range(2):
-                    for b in range(self.num_bins):
-                        random.seed(seed)
-                        torch.manual_seed(seed)
-                        slice_cb = voxel_tensor[c, :, :, b].numpy()
+                # Normalize images
+                gray_f_t = gray_f_t / (torch.max(gray_f_t) + 1e-6)
+                gray_l_t = gray_l_t / (torch.max(gray_l_t) + 1e-6)
 
-                        scale_val = slice_cb.max()
-                        if scale_val > 0:
-                            normalized_slice = slice_cb / scale_val
-                            t_slice = self.transform(normalized_slice)
-                            # Restore fractional scale
-                            if torch.max(t_slice) > 0:
-                                voxel_transformed[c, :, :, b] = scale_val * t_slice / torch.max(t_slice)
-                        else:
-                            voxel_transformed[c, :, :, b] = self.transform(slice_cb)
-                
-                voxel_tensor = voxel_transformed
-                
-                random.seed(seed)
-                torch.manual_seed(seed)
-                gray_f = self.transform(gray_f)
+                # 3. Stack into one giant [22, 256, 256] tensor
+                combo = torch.cat([voxel_flat, gray_f_t, gray_l_t], dim=0)
 
-                random.seed(seed)
-                torch.manual_seed(seed)
-                gray_l = self.transform(gray_l)
+                # 4. Apply vectorised PyTorch transformation ONCE (Takes milliseconds)
+                combo_transformed = self.transform(combo)
+
+                # 5. Unpack back to original shapes
+                voxel_transformed_flat = combo_transformed[:-2]
+                gray_f_final = combo_transformed[-2:-1]
+                gray_l_final = combo_transformed[-1:]
+
+                voxel_tensor = voxel_transformed_flat.view(2, self.num_bins, 256, 256).permute(0, 2, 3, 1)
+
             else:
                 if gray_f.shape == (260, 346):
                     gray_f = gray_f[2:258, 45:301]
@@ -121,8 +114,9 @@ class DatasetTrain(Dataset):
                 gray_f = torch.from_numpy(gray_f).float().unsqueeze(0)
                 gray_l = torch.from_numpy(gray_l).float().unsqueeze(0)
 
-            if torch.max(voxel_tensor) > 0 and torch.max(gray_f) > 0 and torch.max(gray_l) > 0:
-                return voxel_tensor, gray_f/torch.max(gray_f), gray_l/torch.max(gray_l)
+            # Final Return
+            if torch.max(voxel_tensor) > 0 and torch.max(gray_f_final) > 0 and torch.max(gray_l_final) > 0:
+                return voxel_tensor, gray_f_final, gray_l_final
             else:
                 return voxel_0, gray_0, gray_0
         else:
