@@ -18,7 +18,7 @@ from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 from datasets.voxel.dataset_dtx import DatasetTest, DatasetTrain
 from models import let_flownet_voxel
 from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss_single
-from loss.photometric_loss_backward import photometric_loss_backward_single
+from loss.photometric_loss_backward import photometric_loss_backward
 
 
 parser = argparse.ArgumentParser(description='let_flownet_voxel training on several datasets',
@@ -107,7 +107,7 @@ def train(train_loader, model, optimizer, epoch, train_writer):
             # Sum over both channels (dim=1) and time (dim=4) to get a flat [Batch, H, W] spatial mask
             event_mask = torch.sum(event_data, dim=(1, 4)) 
 
-            photometric_loss = photometric_loss_backward_single(
+            photometric_loss = photometric_loss_backward(
                 former_gray[:, 0, :, :].to(device), latter_gray[:, 0, :, :].to(device), 
                 event_mask, flow_predictions, device, print_details, weights=multiscale_weights)
 

@@ -5,13 +5,16 @@ import torch.nn as nn
 
 
 """
-Robust Charbonnier loss.
+Robust Charbonnier loss (Updated to support spatial masking).
 """
-def charbonnier_loss(delta, alpha=0.45, epsilon=1e-3):
-    loss = torch.sum(
-        torch.pow(torch.mul(delta, delta) + torch.mul(epsilon, epsilon), alpha)
-    )
-    return loss
+def charbonnier_loss(delta, alpha=0.45, epsilon=1e-3, mask=None):
+    loss = torch.pow(torch.mul(delta, delta) + torch.mul(epsilon, epsilon), alpha)
+    
+    # If a mask is provided, zero out the loss in regions without events
+    if mask is not None:
+        loss = loss * mask
+        
+    return torch.sum(loss)
 
 
 """
@@ -47,102 +50,95 @@ def backward_warp(x, flo):
 """
 Multi-scale photometric loss, as defined in equation (3) of the paper.
 """
-def photometric_loss_backward(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
-    prev_images = np.array(prev_images_temp)
-    next_images = np.array(next_images_temp)
+def photometric_loss_backward_multiscale(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
+    #1. Expand dimensions from [Batch, H, W] to [Batch, 1, H, W] 
+    prev_images_base = prev_images_temp.unsqueeze(1)
+    next_images_base = next_images_temp.unsqueeze(1)
+    
+    # Expand event mask for interpolation
+    event_mask_base = event_images.unsqueeze(1).float()
 
     total_photometric_loss = 0.0
     loss_weight_sum = 0.0
 
+    # Iterate through the multi-scale flow predictions
     for i in range(len(output)):
         flow = output[i]
-
-        m_batch = flow.size(0)
+        
         height = flow.size(2)
         width = flow.size(3)
 
-        prev_images_resize = torch.zeros(m_batch, 1, height, width)
-        next_images_resize = torch.zeros(m_batch, 1, height, width)
+        #2. Resize images and mask directly on the GPU for the current scale
+        prev_images_scaled = nn.functional.interpolate(
+            prev_images_base, size=(height, width), mode='bilinear', align_corners=False
+        )
+        next_images_scaled = nn.functional.interpolate(
+            next_images_base, size=(height, width), mode='bilinear', align_corners=False
+        )
+        
+        # Resize mask using nearest neighbor to preserve hard 0/1 boundaries
+        event_mask_scaled = nn.functional.interpolate(
+            event_mask_base, size=(height, width), mode='nearest'
+        )
+        valid_mask = (event_mask_scaled > 0).float()
 
-        for b in range(m_batch):
-            prev_images_resize[b, 0, :, :] = torch.from_numpy(
-                cv2.resize(
-                    prev_images[b, :, :], 
-                    (height, width), 
-                    interpolation=cv2.INTER_LINEAR
-                )
-            )
-            next_images_resize[b, 0, :, :] = torch.from_numpy(
-                cv2.resize(
-                    next_images[b, :, :], 
-                    (height, width), 
-                    interpolation=cv2.INTER_LINEAR
-                )
-            )
-
-        prev_images_gpu = prev_images_resize.to(device)
-        next_images_gpu = next_images_resize.to(device)
-
-        next_images_warped = backward_warp(next_images_gpu, flow)
-        error_temp_backward = next_images_warped - prev_images_gpu
-        photometric_loss_backward = charbonnier_loss(error_temp_backward)
+        #3. Calculate Loss
+        next_images_warped = backward_warp(next_images_scaled, flow)
+        error_temp_backward = next_images_warped - prev_images_scaled
+        
+        # Pass the mask to charbonnier to ignore blank regions
+        photometric_loss_scale = charbonnier_loss(error_temp_backward, mask=valid_mask)
 
         if print_details:
-            print(f'photometric_loss_backward: {photometric_loss_backward}')
+            print(f'photometric_loss_backward (scale {i}): {photometric_loss_scale.item()}')
 
-        total_photometric_loss += weights[len(weights) - i -1] * photometric_loss_backward
-        loss_weight_sum += 1.
+        # Apply corresponding weight for the current scale
+        total_photometric_loss += weights[len(weights) - i - 1] * photometric_loss_scale
+        loss_weight_sum += 1.0
 
     total_photometric_loss = total_photometric_loss / loss_weight_sum
 
     if print_details:
-        print('total_photometric_loss: {0}'.format(total_photometric_loss))
+        print('total_photometric_loss: {0}'.format(total_photometric_loss.item()))
 
     return total_photometric_loss
-
 
 """
 Single-scale photometric loss, as defined in equation (3) of the paper.
 """
-def photometric_loss_backward_single(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
-    prev_images = np.array(prev_images_temp)
-    next_images = np.array(next_images_temp)
-
+def photometric_loss_backward(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
     flow = output
 
-    m_batch = flow.size(0)
     height = flow.size(2)
     width = flow.size(3)
 
-    prev_images_resize = torch.zeros(m_batch, 1, height, width)
-    next_images_resize = torch.zeros(m_batch, 1, height, width)
+    # 1. Expand dimensions from [Batch, H, W] to [Batch, 1, H, W]
+    prev_images_base = prev_images_temp.unsqueeze(1)
+    next_images_base = next_images_temp.unsqueeze(1)
+    event_mask_base = event_images.unsqueeze(1).float()
 
-    for b in range(m_batch):
-        prev_images_resize[b, 0, :, :] = torch.from_numpy(
-            cv2.resize(
-                prev_images[b, :, :], 
-                (height, width), 
-                interpolation=cv2.INTER_LINEAR
-            )
-        )
-        next_images_resize[b, 0, :, :] = torch.from_numpy(
-            cv2.resize(
-                next_images[b, :, :], 
-                (height, width), 
-                interpolation=cv2.INTER_LINEAR
-            )
-        )
+    # 2. Resize directly on the GPU using PyTorch
+    prev_images_scaled = nn.functional.interpolate(
+        prev_images_base, size=(height, width), mode='bilinear', align_corners=False
+    )
+    next_images_scaled = nn.functional.interpolate(
+        next_images_base, size=(height, width), mode='bilinear', align_corners=False
+    )
+    
+    # Resize mask using nearest neighbor
+    event_mask_scaled = nn.functional.interpolate(
+        event_mask_base, size=(height, width), mode='nearest'
+    )
+    valid_mask = (event_mask_scaled > 0).float()
 
-    prev_images_gpu = prev_images_resize.to(device)
-    next_images_gpu = next_images_resize.to(device)
-
-    next_images_warped = backward_warp(next_images_gpu, flow)
-    error_temp_backward = next_images_warped - prev_images_gpu
-    photometric_loss_backward = charbonnier_loss(error_temp_backward)
-
-    total_photometric_loss = photometric_loss_backward
+    # 3. Calculate Loss
+    next_images_warped = backward_warp(next_images_scaled, flow)
+    error_temp_backward = next_images_warped - prev_images_scaled
+    
+    # Pass the mask to charbonnier to ignore blank regions
+    photometric_loss = charbonnier_loss(error_temp_backward, mask=valid_mask)
 
     if print_details:
-        print('total_photometric_loss: {0}'.format(total_photometric_loss))
+        print('photometric_loss: {0}'.format(photometric_loss.item()))
 
-    return total_photometric_loss
+    return photometric_loss
