@@ -14,14 +14,14 @@ from .trans.position_encoding import build_position_encoding
 from .model_util import ConvLayer, UpsampleConvLayer, conv_s, deconv, predict_flow
 
 
-__all__ = ['let_flownet']
+__all__ = ['let_flownet_voxel']
 
 
-class Let_Flownet(BaseModel):
+class Let_Flownet_Voxel(BaseModel):
     expansion = 1
 
     def __init__(self, args, device, batchNorm=True):
-        super(Let_Flownet, self).__init__()
+        super(Let_Flownet_Voxel, self).__init__()
 
         self.args = args
         self.device = device
@@ -246,8 +246,8 @@ class Let_Flownet(BaseModel):
         return [param for name, param in self.named_parameters() if 'bias' in name]
 
 
-def let_flownet(args, device, data=None):
-    model = Let_Flownet(args, device)
+def let_flownet_voxel(args, device, data=None):
+    model = Let_Flownet_Voxel(args, device)
 
     if data is not None:
         try:
