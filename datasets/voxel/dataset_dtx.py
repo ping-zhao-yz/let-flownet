@@ -21,21 +21,16 @@ def get_raw_events_for_window(dataset_file, index, dt, xoff=45, yoff=2, orig_w=3
 
     events_x = events[:, 0]
     events_y = events[:, 1]
-    events_t = events[:, 2]
-    events_p = events[:, 3]
+    events_t = events[:, 2].astype(np.float64) # This is your timestamp
+    events_p = 2 * events[:, 3].astype(np.float32) - 1 # Map {0,1} to {-1,1}
 
-    # Crop spatial boundaries
+    # Spatial cropping
     mask = (events_x >= xoff) & (events_x < orig_w - xoff) & (events_y >= yoff) & (events_y < orig_h - yoff)
-    events_x = events_x[mask] - xoff
-    events_y = events_y[mask] - yoff
-    events_t = events_t[mask]
-    events_p = events_p[mask]
-
-    return events_t, events_x, events_y, events_p
+    return events_t[mask], events_x[mask] - xoff, events_y[mask] - yoff, events_p[mask]
 
 
 class DatasetTrain(Dataset):
-    def __init__(self, dt, dataset_file, train_dir, transform=None, num_bins=10):
+    def __init__(self, dt, dataset_file, transform=None, num_bins=10):
         self.transform = transform
         self.dt = dt
         self.num_bins = num_bins
@@ -137,7 +132,7 @@ class DatasetTrain(Dataset):
 
 
 class DatasetTest(Dataset):
-    def __init__(self, dt, dataset_file, test_dir, gt_start_time=0, num_bins=10):
+    def __init__(self, dt, dataset_file, gt_start_time=0, num_bins=10):
         self.dt = dt
         self.num_bins = num_bins
         self.dataset_file = dataset_file

@@ -69,19 +69,16 @@ image_resize = 256
 sp_threshold = args.sp_threshold
 div_flow = 1
 
-dataset_dir = '/media/windows_data/code/research/dataset/Event/mvsec/preprocessed'
 src_file_dir = '/media/windows_data/code/research/dataset/Event/mvsec/original'
 
-save_dir = 'let_flownet_voxel_dt1_output'
 train_env = args.train_env
 test_env = args.test_env
-
-train_dir = os.path.join(dataset_dir, train_env)
-test_dir = os.path.join(dataset_dir, test_env)
 
 train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
 test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
 test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
+
+save_dir = 'let_flownet_voxel_dt1_output'
 
 arch = "let_flownet_voxel"
 
@@ -342,7 +339,7 @@ def main():
         output_writers.append(SummaryWriter(
             os.path.join(save_path, 'test', str(i))))
 
-    Test_dataset = DatasetTest(args.dt, test_src_file, test_dir, gt_start_time=gt_start, num_bins=args.num_bins)
+    Test_dataset = DatasetTest(args.dt, test_src_file, gt_start_time=gt_start, num_bins=args.num_bins)
     test_loader = DataLoader(dataset=Test_dataset,
                              batch_size=1,
                              shuffle=False,
@@ -398,7 +395,7 @@ def main():
     ])
 
     Train_dataset = DatasetTrain(
-        args.dt, train_src_file, train_dir, transform=co_transform, num_bins=args.num_bins)
+        args.dt, train_src_file, transform=co_transform, num_bins=args.num_bins)
     train_loader = DataLoader(dataset=Train_dataset,
                               batch_size=batch_size,
                               shuffle=True,
