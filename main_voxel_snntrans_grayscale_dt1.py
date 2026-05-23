@@ -92,12 +92,13 @@ def train(train_loader, model, optimizer, epoch, train_writer):
 
     multiscale_weights = [1, 1, 1, 1]
     print_freq = 100
+    valid_batches = 0
 
     for i_batch, data in enumerate(train_loader, 0):
         voxel_tensor, former_gray, latter_gray = data
 
         if torch.sum(voxel_tensor) > 0:
-            print_details = i_batch % print_freq == 0
+            print_details = valid_batches % print_freq == 0
 
             # No need for initInputRepresentation; shape is already [Batch, 2, H, W, num_bins]
             event_data = voxel_tensor.to(device)
@@ -133,6 +134,7 @@ def train(train_loader, model, optimizer, epoch, train_writer):
                 print('-------------------------------------------------------')
 
             iter_g += 1
+            valid_batches += 1
 
     return losses.avg
 
@@ -182,11 +184,11 @@ def validate(test_loader, model, epoch, output_writers):
             # Permute from [Channels, H, W] to [H, W, Channels] and convert to clean numpy
             pred_flow = output_resized[0].permute(1, 2, 0).numpy()
 
-            u_gt_all = np.array(gt_temp[:, 0, :, :])
-            v_gt_all = np.array(gt_temp[:, 1, :, :])
+            u_gt_all = gt_temp[:, 0, :, :]
+            v_gt_all = gt_temp[:, 1, :, :]
 
             u_gt, v_gt = estimate_corresponding_gt_flow(
-                u_gt_all, v_gt_all, gt_ts_temp, np.array(ts_f), np.array(ts_l))
+                u_gt_all, v_gt_all, gt_ts_temp, ts_f.numpy(), ts_l.numpy())
             gt_flow = np.stack((u_gt, v_gt), axis=2)
 
             # Mask derivation for Metric Calculation & Visualization
