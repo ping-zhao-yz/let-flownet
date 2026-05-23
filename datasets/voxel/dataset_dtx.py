@@ -71,6 +71,16 @@ class DatasetTrain(Dataset):
             # [Channels, Height, Width, Time] -> [2, 256, 256, num_bins]
             voxel_tensor = voxel_flat.view(self.num_bins, 2, 256, 256).permute(1, 2, 3, 0)
             
+            # Standardize the voxel grid to prevent SNN saturation
+            mask = voxel_tensor != 0
+            if mask.any():
+                mean = voxel_tensor[mask].mean()
+                std = voxel_tensor[mask].std()
+                if std > 0:
+                    voxel_tensor[mask] = (voxel_tensor[mask] - mean) / std
+                else:
+                    voxel_tensor[mask] = voxel_tensor[mask] - mean
+
             # Fetch gray images
             with h5py.File(self.dataset_file, 'r') as d_set:
                 gray_f_raw = d_set['davis']['left']['image_raw'][index]
@@ -168,6 +178,16 @@ class DatasetTest(Dataset):
             # 3. Reshape and Permute for SNN 
             # [Channels, Height, Width, Time] -> [2, 256, 256, num_bins]
             voxel_tensor = voxel_flat.view(self.num_bins, 2, 256, 256).permute(1, 2, 3, 0)
+
+            # Standardize the voxel grid to prevent SNN saturation
+            mask = voxel_tensor != 0
+            if mask.any():
+                mean = voxel_tensor[mask].mean()
+                std = voxel_tensor[mask].std()
+                if std > 0:
+                    voxel_tensor[mask] = (voxel_tensor[mask] - mean) / std
+                else:
+                    voxel_tensor[mask] = voxel_tensor[mask] - mean
 
             return voxel_tensor, ts_f, ts_l
         else:

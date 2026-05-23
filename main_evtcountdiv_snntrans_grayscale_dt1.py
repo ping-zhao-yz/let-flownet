@@ -115,11 +115,11 @@ def train(train_loader, model, optimizer, epoch, train_writer):
             # compute output
             flow_predictions = model(event_data, image_resize, sp_threshold)
 
-            # Photometric loss.
+            # Photometric loss
             photometric_loss = photometric_loss_backward(former_gray[:, 0, :, :], latter_gray[:, 0, :, :], torch.sum(
                 event_data, 4), flow_predictions, device, print_details, weights=multiscale_weights)
 
-            # Smoothness loss.
+            # Smoothness loss
             smoothness_loss = smooth_loss_single(flow_predictions)
 
             # total_loss

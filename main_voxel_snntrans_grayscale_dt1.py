@@ -28,20 +28,29 @@ parser = argparse.ArgumentParser(description='let_flownet_voxel training on seve
 
 parser.add_argument('--pretrained', dest='pretrained', default=None,
                     help='path to pre-trained model')
+
 parser.add_argument('--solver', default='adam', choices=['adam', 'sgd'],
                     help='solver algorithms')
+
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
+
 parser.add_argument('--norm', default='BN',
                     help='batch norm for Transformer layers. BN: BatchNorm2d; IN: InstanceNorm2d')
+
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 
 parser.add_argument('--tau', default=20*1e-3, help='time constant for Leaky Integrate and Fire (LIF) model')
+
 parser.add_argument('--num_enc_layers', default=2, help='number of transformer encoder layers')
 parser.add_argument('--num_dec_layers', default=2, help='number of transformer decoder layers')
-parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
+
+parser.add_argument('--mixed_precision', action='store_true',
+                    help='use mixed precision')
+
 parser.add_argument('--dropout', type=float, default=0.0)
+
 parser.add_argument('--dt', type=int, default=1, help='time interval (1, 4, or 8)')
 parser.add_argument('--sp_threshold', type=float, default=0.75, help='spike threshold')
 
