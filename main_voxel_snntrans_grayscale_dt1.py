@@ -106,6 +106,9 @@ def train(train_loader, model, optimizer, epoch, train_writer):
     for i_batch, data in enumerate(train_loader, 0):
         voxel_tensor, former_gray, latter_gray = data
 
+        if i_batch % 100 == 0:
+            print(f"Batch {i_batch} received. Sum of voxels: {torch.sum(voxel_tensor)}")
+
         if torch.sum(voxel_tensor) > 0:
             print_details = valid_batches % print_freq == 0
 
@@ -308,7 +311,7 @@ def validate(test_loader, model, epoch, output_writers):
 def main():
     global args
 
-    workers = 16
+    workers = 0
     best_EPE = -1
     evaluate_interval = 3
 
