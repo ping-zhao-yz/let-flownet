@@ -170,8 +170,7 @@ class Let_Flownet_EvtCount(BaseModel):
         """
 
         #************* path to transformer
-        # Extract spatial dimensions directly from the SNN features
-        n, c, H, W = blocks[-4].size()
+        H = W = image_resize
 
         # Small -> Big
         #******** scale 0

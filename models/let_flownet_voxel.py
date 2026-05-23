@@ -169,9 +169,8 @@ class Let_Flownet_Voxel(BaseModel):
         :return: N x num_output_channels x H x W
         """
 
-        #************* path to transformer
-        # Extract spatial dimensions directly from the SNN features
-        n, c, H, W = blocks[-4].size()
+        #************* path to transformer\
+        H = W = image_resize
 
         # Small -> Big
         #******** scale 0
