@@ -72,16 +72,6 @@ class DatasetTrain(Dataset):
             # ---> CRITICAL FIX: Move back to CPU before Datloader collation! <---
             voxel_tensor = voxel_tensor.cpu()
 
-            # 3. Standardize the voxel grid to prevent SNN saturation
-            mask = voxel_tensor != 0
-            if mask.any():
-                mean = voxel_tensor[mask].mean()
-                std = voxel_tensor[mask].std()
-                if std > 0:
-                    voxel_tensor[mask] = (voxel_tensor[mask] - mean) / std
-                else:
-                    voxel_tensor[mask] = voxel_tensor[mask] - mean
-
             # Fetch gray images
             with h5py.File(self.dataset_file, 'r') as d_set:
                 gray_f_raw = d_set['davis']['left']['image_raw'][index]
@@ -115,9 +105,29 @@ class DatasetTrain(Dataset):
                 gray_f_final = combo_transformed[-2:-1]
                 gray_l_final = combo_transformed[-1:]
 
+                # Standardize AFTER the crop/flip ensures the actual input to SNN is calibrated
+                mask = voxel_transformed_flat != 0
+                if mask.any():
+                    mean = voxel_transformed_flat[mask].mean()
+                    std = voxel_transformed_flat[mask].std()
+                    if std > 0:
+                        voxel_transformed_flat[mask] = (voxel_transformed_flat[mask] - mean) / std
+                    else:
+                        voxel_transformed_flat[mask] = voxel_transformed_flat[mask] - mean
+
                 # Reshape and move Time to the last dimension for the SNN
                 voxel_tensor = voxel_transformed_flat.view(self.num_bins, 2, 256, 256).permute(1, 2, 3, 0)
             else:
+                # Standardize AFTER the crop/flip ensures the actual input to SNN is calibrated
+                mask = voxel_tensor != 0
+                if mask.any():
+                    mean = voxel_tensor[mask].mean()
+                    std = voxel_tensor[mask].std()
+                    if std > 0:
+                        voxel_tensor[mask] = (voxel_tensor[mask] - mean) / std
+                    else:
+                        voxel_tensor[mask] = voxel_tensor[mask] - mean
+
                 voxel_tensor = voxel_tensor.permute(1, 2, 3, 0)
 
                 if gray_f.shape == (260, 346):

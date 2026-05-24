@@ -118,8 +118,9 @@ def train(train_loader, model, optimizer, epoch, train_writer):
             flow_predictions = model(event_data, image_resize, sp_threshold)
 
             # Photometric loss (sum along dim=4 to get the dense spatial map mask)
-            # Sum over both channels (dim=1) and time (dim=4) to get a flat [Batch, H, W] spatial mask
-            event_mask = torch.sum(event_data, dim=(1, 4)) 
+
+            # Create a boolean mask of where events exist, sum the boolean flags, and clamp to 1.0
+            event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
 
             photometric_loss = photometric_loss_backward(
                 former_gray[:, 0, :, :].to(device), latter_gray[:, 0, :, :].to(device), 
@@ -204,8 +205,7 @@ def validate(test_loader, model, epoch, output_writers):
             gt_flow = np.stack((u_gt, v_gt), axis=2)
 
             # Mask derivation for Metric Calculation & Visualization
-            # Sum across Time (dim 3 on batch[0]) and Channels (dim 0 on batch[0])
-            mask_tensor = torch.sum(event_data[0], dim=(0, 3)).cpu()
+            mask_tensor = torch.sum((event_data[0] != 0).float(), dim=(0, 3)).cpu()
             mask_temp_np = mask_tensor.numpy() > 0
 
             #   ----------- Visualization
