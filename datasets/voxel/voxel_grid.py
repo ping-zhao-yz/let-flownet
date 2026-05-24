@@ -1,51 +1,55 @@
 import torch
 
-def generate_voxel_grid(events_t, events_x, events_y, events_p, num_bins, height, width):
+def events_to_voxel_grid(events_t, events_x, events_y, events_p, num_bins, height, width):
     """
-    Dynamically converts raw events to a bilinear voxel grid.
-    Adapted from SDformerFlow loader_utils.
+    Build a voxel grid with bilinear interpolation in the time domain.
+    Assumes all input tensors are already on the GPU.
     """
-    # 1. Normalize timestamps to [0, num_bins - 1]
-    t_start = events_t[0]
-    t_end = events_t[-1]
-    
-    if t_start == t_end: # Edge case protection
-        return torch.zeros((2 * num_bins, height, width), dtype=torch.float32)
+    assert num_bins > 0
+    assert width > 0
+    assert height > 0
 
-    t_norm = (events_t - t_start) / (t_end - t_start)
-    t_norm = t_norm * (num_bins - 1)
+    with torch.no_grad():
+        # Initialize the voxel grid on GPU
+        voxel_grid = torch.zeros(num_bins, height, width, dtype=torch.float32, device='cuda').flatten()
 
-    # 2. Get upper and lower temporal bin indices for bilinear interpolation
-    t_floor = torch.floor(t_norm)
-    t_ceil = torch.ceil(t_norm)
-    
-    # Calculate interpolation weights (how close the event is to the bin)
-    weight_ceil = t_norm - t_floor
-    weight_floor = 1.0 - weight_ceil
+        # Ensure tensors are float/long as needed for indexing and accumulation
+        ts = events_t.float()
+        xs = events_x.long()
+        ys = events_y.long()
+        pols = events_p.float()
+        pols[pols == 0] = -1
 
-    # Ensure indices are integers
-    t_floor = t_floor.long()
-    t_ceil = t_ceil.long()
-    x = events_x.long()
-    y = events_y.long()
-    
-    # Split polarities to separate channels (e.g., pos=0, neg=1)
-    # If p is [-1, 1], map to [1, 0]
-    pol = (events_p > 0).long() 
+        # Normalize timestamps to [0, num_bins - 1]
+        last_stamp = ts[-1]
+        first_stamp = ts[0]
+        deltaT = last_stamp - first_stamp
+        if deltaT == 0:
+            deltaT = 1.0
 
-    # 3. Create flat empty voxel grid: shape (num_bins * 2_polarities * H * W)
-    voxel_grid_flat = torch.zeros(num_bins * 2 * height * width, dtype=torch.float32)
+        ts = (num_bins - 1) * (ts - first_stamp) / deltaT
 
-    # 4. Calculate flattened 1D indices for index_add_
-    # Channel layout: Time Bin -> Polarity -> Y -> X
-    index_floor = (t_floor * 2 * height * width) + (pol * height * width) + (y * width) + x
-    index_ceil = (t_ceil * 2 * height * width) + (pol * height * width) + (y * width) + x
+        tis = torch.floor(ts)
+        tis_long = tis.long()
+        dts = ts - tis
+        vals_left = pols * (1.0 - dts.float())
+        vals_right = pols * dts.float()
 
-    # 5. Scatter the weights using index_add_ (Extremely fast PyTorch C++ backend)
-    voxel_grid_flat.index_add_(0, index_floor, weight_floor.float())
-    voxel_grid_flat.index_add_(0, index_ceil, weight_ceil.float())
+        valid_indices = tis < num_bins
+        valid_indices &= tis >= 0
+        voxel_grid.index_add_(dim=0,
+                                index=xs[valid_indices] + ys[valid_indices]
+                                * width + tis_long[valid_indices] * width * height,
+                                source=vals_left[valid_indices])
 
-    # 6. Reshape back to 3D tensor: (num_bins * 2, height, width)
-    voxel_grid = voxel_grid_flat.view(num_bins * 2, height, width)
-    
+        valid_indices = (tis + 1) < num_bins
+        valid_indices &= tis >= 0
+
+        voxel_grid.index_add_(dim=0,
+                                index=xs[valid_indices] + ys[valid_indices] * width
+                                + (tis_long[valid_indices] + 1) * width * height,
+                                source=vals_right[valid_indices])
+
+        voxel_grid = voxel_grid.view(num_bins, height, width)
+
     return voxel_grid

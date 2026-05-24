@@ -3,7 +3,7 @@ import numpy as np
 import h5py
 import random
 from torch.utils.data import Dataset
-from datasets.voxel.voxel_grid import generate_voxel_grid
+from datasets.voxel.voxel_grid import events_to_voxel_grid
 
 def get_raw_events_for_window(dataset_file, index, dt, xoff=45, yoff=2, orig_w=346, orig_h=260):
     """ Helper to fetch and crop raw events. """
@@ -54,7 +54,7 @@ class DatasetTrain(Dataset):
 
             # 2. Generate the Voxel Grid
             # Returns shape: [num_bins * 2, H, W]
-            voxel_flat = generate_voxel_grid(
+            voxel_flat = events_to_voxel_grid(
                 torch.from_numpy(events_t).float(),
                 torch.from_numpy(events_x).float(),
                 torch.from_numpy(events_y).float(),
@@ -162,7 +162,7 @@ class DatasetTest(Dataset):
 
             # 2. Generate the Voxel Grid
             # Returns shape: (2 * num_bins, 256, 256)
-            voxel_flat = generate_voxel_grid(
+            voxel_flat = events_to_voxel_grid(
                 torch.from_numpy(events_t).float(),
                 torch.from_numpy(events_x).float(),
                 torch.from_numpy(events_y).float(),
