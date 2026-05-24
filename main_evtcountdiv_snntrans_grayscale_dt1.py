@@ -182,11 +182,17 @@ def validate(test_loader, model, epoch, output_writers):
             output = model(event_data, image_resize, sp_threshold)
             output_temp = output.cpu()
 
+            # Calculate the scaling factors
+            scale_h = image_resize / output_temp.size(2)
+            scale_w = image_resize / output_temp.size(3)
+
             pred_flow = np.zeros((image_resize, image_resize, 2), dtype=np.float32)
-            pred_flow[:, :, 0] = cv2.resize(np.array(
-                output_temp[0, 0, :, :]), (image_resize, image_resize), interpolation=cv2.INTER_LINEAR)
-            pred_flow[:, :, 1] = cv2.resize(np.array(
-                output_temp[0, 1, :, :]), (image_resize, image_resize), interpolation=cv2.INTER_LINEAR)
+
+            # Multiply by scale_w for the x-flow and scale_h for the y-flow
+            pred_flow[:, :, 0] = cv2.resize(np.array(output_temp[0, 0, :, :]), 
+                                            (image_resize, image_resize), interpolation=cv2.INTER_LINEAR) * scale_w
+            pred_flow[:, :, 1] = cv2.resize(np.array(output_temp[0, 1, :, :]), 
+                                            (image_resize, image_resize), interpolation=cv2.INTER_LINEAR) * scale_h
 
             u_gt_all = np.array(gt_temp[:, 0, :, :])
             v_gt_all = np.array(gt_temp[:, 1, :, :])

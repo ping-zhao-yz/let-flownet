@@ -139,22 +139,22 @@ class Let_Flownet_Voxel(BaseModel):
             current_1 = self.conv_s1(input11)
             mem_1 = alpha*mem_1 + current_1
             mem_1, spike_1 = LIF_Neuron(mem_1, threshold)
-            mem_1_total = mem_1_total + current_1
+            mem_1_total = mem_1_total + spike_1
 
             current_2 = self.conv_s2(spike_1)
             mem_2 = alpha*mem_2 + current_2
             mem_2, spike_2 = LIF_Neuron(mem_2, threshold)
-            mem_2_total = mem_2_total + current_2
+            mem_2_total = mem_2_total + spike_2
 
             current_3 = self.conv_s3(spike_2)
             mem_3 = alpha*mem_3 + current_3
             mem_3, spike_3 = LIF_Neuron(mem_3, threshold)
-            mem_3_total = mem_3_total + current_3
+            mem_3_total = mem_3_total + spike_3
 
             current_4 = self.conv_s4(spike_3)
             mem_4 = alpha*mem_4 + current_4
             mem_4, spike_4 = LIF_Neuron(mem_4, threshold)
-            mem_4_total = mem_4_total + current_4
+            mem_4_total = mem_4_total + spike_4
 
         blocks = []
         # Big -> Small

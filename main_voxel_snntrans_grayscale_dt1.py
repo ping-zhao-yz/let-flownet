@@ -194,6 +194,13 @@ def validate(test_loader, model, epoch, output_writers):
             output_resized = torch.nn.functional.interpolate(
                 output_temp, size=(image_resize, image_resize), mode='bilinear', align_corners=False
             )
+
+            # ---> CRITICAL FIX: Scale the flow magnitude by the spatial upsample factor <---
+            scale_h = image_resize / output_temp.size(2)
+            scale_w = image_resize / output_temp.size(3)
+            output_resized[:, 0, :, :] *= scale_w
+            output_resized[:, 1, :, :] *= scale_h
+            
             # Permute from [Channels, H, W] to [H, W, Channels] and convert to clean numpy
             pred_flow = output_resized[0].permute(1, 2, 0).numpy()
 
