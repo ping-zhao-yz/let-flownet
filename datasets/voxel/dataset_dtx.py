@@ -102,8 +102,8 @@ class DatasetTrain(Dataset):
                     gray_f = gray_f[2:258, 45:301]
                     gray_l = gray_l[2:258, 45:301]
                 
-                gray_f_t = torch.from_numpy(gray_f).float().unsqueeze(0)
-                gray_l_t = torch.from_numpy(gray_l).float().unsqueeze(0)
+                gray_f_t = torch.from_numpy(gray_f).float().unsqueeze(0).to(voxel_flat.device)
+                gray_l_t = torch.from_numpy(gray_l).float().unsqueeze(0).to(voxel_flat.device)
                 
                 # Normalize images
                 gray_f_t = gray_f_t / (torch.max(gray_f_t) + 1e-6)
@@ -126,8 +126,8 @@ class DatasetTrain(Dataset):
                 if gray_f.shape == (260, 346):
                     gray_f = gray_f[2:258, 45:301]
                     gray_l = gray_l[2:258, 45:301]
-                gray_f = torch.from_numpy(gray_f).float().unsqueeze(0)
-                gray_l = torch.from_numpy(gray_l).float().unsqueeze(0)
+                gray_f_final = torch.from_numpy(gray_f).float().unsqueeze(0).to(voxel_flat.device)
+                gray_l_final = torch.from_numpy(gray_l).float().unsqueeze(0).to(voxel_flat.device)
 
             # Final Return
             if torch.max(voxel_tensor) > 0 and torch.max(gray_f_final) > 0 and torch.max(gray_l_final) > 0:
