@@ -52,7 +52,7 @@ class DatasetTrain(Dataset):
 
     def __getitem__(self, index):
         # 1. Update the shape to match our new 2-channel grid (Keep it on CPU)
-        voxel_0 = torch.zeros(self.num_bins, 2, 256, 256)
+        voxel_0 = torch.zeros(2, 256, 256, self.num_bins)
         gray_0 = torch.zeros(1, 256, 256)
 
         if index + 100 < self.length and index > 100:
@@ -117,9 +117,11 @@ class DatasetTrain(Dataset):
                 gray_f_final = combo_transformed[-2:-1]
                 gray_l_final = combo_transformed[-1:]
 
-                # Reshape back to the 4D layout
-                voxel_tensor = voxel_transformed_flat.view(self.num_bins, 2, 256, 256)
+                # Reshape and move Time to the last dimension for the SNN
+                voxel_tensor = voxel_transformed_flat.view(self.num_bins, 2, 256, 256).permute(1, 2, 3, 0)
             else:
+                voxel_tensor = voxel_tensor.permute(1, 2, 3, 0)
+
                 if gray_f.shape == (260, 346):
                     gray_f = gray_f[2:258, 45:301]
                     gray_l = gray_l[2:258, 45:301]
@@ -150,7 +152,7 @@ class DatasetTest(Dataset):
             self.length = d_set['davis']['left']['image_raw'].shape[0]
 
     def __getitem__(self, index):
-        voxel_0 = torch.zeros(self.num_bins, 2, 256, 256)
+        voxel_0 = torch.zeros(2, 256, 256, self.num_bins)
         
         ts_f = self.gray_image_ts[index]
         ts_l = self.gray_image_ts[index + self.dt] if index + self.dt < self.length else 0.0
@@ -176,7 +178,7 @@ class DatasetTest(Dataset):
             )
 
             # ---> Move back to CPU <---
-            voxel_tensor = voxel_tensor.cpu()
+            voxel_tensor = voxel_tensor.cpu().permute(1, 2, 3, 0)
 
             # 3. Standardize the voxel grid to prevent SNN saturation
             mask = voxel_tensor != 0
