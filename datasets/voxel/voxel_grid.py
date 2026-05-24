@@ -30,19 +30,22 @@ def events_to_voxel_grid(events, num_bins, height, width, device=torch.device('c
         events_torch = events_torch.to(device)
 
         # 3. Extract components (Assuming order: t, x, y, p based on your stacking)
-        ts = events_torch[:, 0].float()
+        # KEEP TIMESTAMP IN DOUBLE (float64) PRECISION
+        ts_double = events_torch[:, 0].double()
         xs = events_torch[:, 1].long()
         ys = events_torch[:, 2].long()
         pols = events_torch[:, 3].float()
 
         # 4. Time normalization
-        last_stamp = ts[-1]
-        first_stamp = ts[0]
+        last_stamp = ts_double[-1]
+        first_stamp = ts_double[0]
         deltaT = last_stamp - first_stamp
         if deltaT == 0:
             deltaT = 1.0
 
-        ts = (num_bins - 1) * (ts - first_stamp) / deltaT
+        # Compute normalized time, THEN safely cast to float32
+        ts = ((num_bins - 1) * (ts_double - first_stamp) / deltaT).float()
+        
         tis = torch.floor(ts).long()
         dts = ts - tis.float()
 

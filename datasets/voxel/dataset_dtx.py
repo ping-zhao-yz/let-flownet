@@ -24,9 +24,7 @@ def get_raw_events_for_window(dataset_file, index, dt, xoff=45, yoff=2, orig_w=3
     events_y = events[:, 1]
     events_t = events[:, 2].astype(np.float64)
     events_p = events[:, 3].astype(np.float32)
-
     events_p = 2*events_p - 1
-    # events_t = events_t*1e-9
 
     # Spatial cropping
     mask = (events_x >= xoff) & (events_x < orig_w - xoff) & (events_y >= yoff) & (events_y < orig_h - yoff)
