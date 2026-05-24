@@ -6,28 +6,39 @@ from torch.utils.data import Dataset
 from datasets.voxel.voxel_grid import events_to_voxel_grid
 
 def get_raw_events_for_window(dataset_file, index, dt, xoff=45, yoff=2, orig_w=346, orig_h=260):
-    """ Helper to fetch and crop raw events. """
     with h5py.File(dataset_file, 'r') as d_set:
         event_inds = d_set['davis']['left']['image_raw_event_inds']
         if index + dt >= len(event_inds):
-            return np.array([]), np.array([]), np.array([]), np.array([])
+            return None
             
         start_idx = event_inds[index]
         end_idx = event_inds[index + dt]
         if start_idx >= end_idx:
-            return np.array([]), np.array([]), np.array([]), np.array([])
+            return None
             
         events = d_set['davis']['left']['events'][start_idx:end_idx]
 
+    # Map to [N, 4] where: 0=t, 1=x, 2=y, 3=p
+    # Based testing, raw data is [x, y, t, p]
     events_x = events[:, 0]
     events_y = events[:, 1]
-    events_t = events[:, 2].astype(np.float64) # This is your timestamp
-    events_p = 2 * events[:, 3].astype(np.float32) - 1 # Map {0,1} to {-1,1}
+    events_t = events[:, 2].astype(np.float64)
+    events_p = events[:, 3].astype(np.float32)
+
+    events_p = 2*events_p - 1
+    # events_t = events_t*1e-9
 
     # Spatial cropping
     mask = (events_x >= xoff) & (events_x < orig_w - xoff) & (events_y >= yoff) & (events_y < orig_h - yoff)
-    return events_t[mask], events_x[mask] - xoff, events_y[mask] - yoff, events_p[mask]
+    
+    events_packed = np.stack([
+        events_t[mask],
+        events_x[mask] - xoff,
+        events_y[mask] - yoff,
+        events_p[mask]
+    ], axis=1)
 
+    return events_packed
 
 class DatasetTrain(Dataset):
     def __init__(self, dt, dataset_file, transform=None, num_bins=10):
@@ -46,20 +57,19 @@ class DatasetTrain(Dataset):
 
         if index + 100 < self.length and index > 100:
             # 1. Fetch raw events using the helper function
-            events_t, events_x, events_y, events_p = get_raw_events_for_window(self.dataset_file, index, self.dt)
+            events_packed = get_raw_events_for_window(self.dataset_file, index, self.dt)
             
             # Handle empty windows
-            if len(events_t) == 0:
+            if events_packed is None or len(events_packed) == 0:
                 return voxel_0, gray_0, gray_0
 
             # 2. Generate the Voxel Grid
             # Returns shape: [num_bins * 2, H, W]
             voxel_flat = events_to_voxel_grid(
-                torch.from_numpy(events_t).float(),
-                torch.from_numpy(events_x).float(),
-                torch.from_numpy(events_y).float(),
-                torch.from_numpy(events_p).float(),
-                num_bins=self.num_bins, height=256, width=256
+                events_packed,
+                num_bins=self.num_bins,
+                height=256,
+                width=256
             )
             
             # 3. Reshape and Permute for SNN 
@@ -154,20 +164,19 @@ class DatasetTest(Dataset):
 
         if (index + 20 < self.length) and (index > 20):
             # 1. Fetch raw events using the helper function
-            events_t, events_x, events_y, events_p = get_raw_events_for_window(self.dataset_file, index, self.dt)
-
+            events_packed = get_raw_events_for_window(self.dataset_file, index, self.dt)
+            
             # Handle empty windows
-            if len(events_t) == 0:
+            if events_packed is None or len(events_packed) == 0:
                 return voxel_0, ts_f, ts_l
 
             # 2. Generate the Voxel Grid
-            # Returns shape: (2 * num_bins, 256, 256)
+            # Returns shape: [num_bins * 2, H, W]
             voxel_flat = events_to_voxel_grid(
-                torch.from_numpy(events_t).float(),
-                torch.from_numpy(events_x).float(),
-                torch.from_numpy(events_y).float(),
-                torch.from_numpy(events_p).float(),
-                num_bins=self.num_bins, height=256, width=256
+                events_packed,
+                num_bins=self.num_bins,
+                height=256,
+                width=256
             )
 
             # 3. Reshape and Permute for SNN 

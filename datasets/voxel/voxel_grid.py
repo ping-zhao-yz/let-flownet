@@ -1,6 +1,8 @@
 import torch
 
-def events_to_voxel_grid(events_t, events_x, events_y, events_p, num_bins, height, width):
+device = torch.device("cuda")
+
+def events_to_voxel_grid(events, num_bins, height, width, device=device):
     """
     Build a voxel grid with bilinear interpolation in the time domain.
     Assumes all input tensors are already on the GPU.
@@ -10,24 +12,26 @@ def events_to_voxel_grid(events_t, events_x, events_y, events_p, num_bins, heigh
     assert height > 0
 
     with torch.no_grad():
+        events_torch = torch.from_numpy(events).to(device)
+
         # Initialize the voxel grid on GPU
-        voxel_grid = torch.zeros(num_bins, height, width, dtype=torch.float32, device='cuda').flatten()
+        voxel_grid = torch.zeros(num_bins, height, width, dtype=torch.float32, device=device).flatten()
 
-        # Ensure tensors are float/long as needed for indexing and accumulation
-        ts = events_t.float()
-        xs = events_x.long()
-        ys = events_y.long()
-        pols = events_p.float()
-        pols[pols == 0] = -1
-
-        # Normalize timestamps to [0, num_bins - 1]
-        last_stamp = ts[-1]
-        first_stamp = ts[0]
+        # normalize the event timestamps so that they lie between 0 and num_bins
+        last_stamp = events_torch[-1, 0]
+        first_stamp = events_torch[0, 0]
         deltaT = last_stamp - first_stamp
+
         if deltaT == 0:
             deltaT = 1.0
 
-        ts = (num_bins - 1) * (ts - first_stamp) / deltaT
+        events_torch[:, 0] = (num_bins - 1) * (events_torch[:, 0] - first_stamp) / deltaT
+
+        ts = events_torch[:, 0]
+        xs = events_torch[:, 1].long()
+        ys = events_torch[:, 2].long()
+        pols = events_torch[:, 3].float()
+        pols[pols == 0] = -1  # polarity should be +1 / -1
 
         tis = torch.floor(ts)
         tis_long = tis.long()
