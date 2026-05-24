@@ -51,32 +51,30 @@ class DatasetTrain(Dataset):
             self.length = d_set['davis']['left']['image_raw'].shape[0]
 
     def __getitem__(self, index):
-        # Empty tensor fallback: [Channels, H, W, Time] -> [2, 256, 256, num_bins]
-        voxel_0 = torch.zeros(2, 256, 256, self.num_bins)
+        # 1. Update the shape to match our new 2-channel grid (Keep it on CPU)
+        voxel_0 = torch.zeros(self.num_bins, 2, 256, 256)
         gray_0 = torch.zeros(1, 256, 256)
 
         if index + 100 < self.length and index > 100:
             # 1. Fetch raw events using the helper function
             events_packed = get_raw_events_for_window(self.dataset_file, index, self.dt)
-            
+
             # Handle empty windows
             if events_packed is None or len(events_packed) == 0:
                 return voxel_0, gray_0, gray_0
 
-            # 2. Generate the Voxel Grid
-            # Returns shape: [num_bins * 2, H, W]
-            voxel_flat = events_to_voxel_grid(
+            # 2. Generate the Voxel Grid on GPU for speed
+            voxel_tensor = events_to_voxel_grid(
                 events_packed,
                 num_bins=self.num_bins,
                 height=256,
                 width=256
             )
             
-            # 3. Reshape and Permute for SNN 
-            # [Channels, Height, Width, Time] -> [2, 256, 256, num_bins]
-            voxel_tensor = voxel_flat.view(self.num_bins, 2, 256, 256).permute(1, 2, 3, 0)
-            
-            # Standardize the voxel grid to prevent SNN saturation
+            # ---> CRITICAL FIX: Move back to CPU before Datloader collation! <---
+            voxel_tensor = voxel_tensor.cpu()
+
+            # 3. Standardize the voxel grid to prevent SNN saturation
             mask = voxel_tensor != 0
             if mask.any():
                 mean = voxel_tensor[mask].mean()
@@ -94,34 +92,33 @@ class DatasetTrain(Dataset):
             gray_l = np.uint8(gray_l_raw)
 
             if self.transform:
-                # 1. Flatten the 4D voxel tensor [2, 256, 256, num_bins] into 3D [2*num_bins, 256, 256]
-                voxel_flat = voxel_tensor.permute(0, 3, 1, 2).reshape(2 * self.num_bins, 256, 256)
+                # Flatten the 4D tensor to 3D for concatenation
+                voxel_flat = voxel_tensor.view(2 * self.num_bins, 256, 256)
                 
-                # 2. Ensure Gray images are [1, 256, 256]
+                # Keep images on CPU (Remove the .to(device) if you added it earlier)
                 if gray_f.shape == (260, 346):
                     gray_f = gray_f[2:258, 45:301]
                     gray_l = gray_l[2:258, 45:301]
                 
-                gray_f_t = torch.from_numpy(gray_f).float().unsqueeze(0).to(voxel_flat.device)
-                gray_l_t = torch.from_numpy(gray_l).float().unsqueeze(0).to(voxel_flat.device)
+                gray_f_t = torch.from_numpy(gray_f).float().unsqueeze(0)
+                gray_l_t = torch.from_numpy(gray_l).float().unsqueeze(0)
                 
                 # Normalize images
                 gray_f_t = gray_f_t / (torch.max(gray_f_t) + 1e-6)
                 gray_l_t = gray_l_t / (torch.max(gray_l_t) + 1e-6)
 
-                # 3. Stack into one giant [22, 256, 256] tensor
+                # Concatenate on the CPU safely
                 combo = torch.cat([voxel_flat, gray_f_t, gray_l_t], dim=0)
 
-                # 4. Apply vectorised PyTorch transformation ONCE (Takes milliseconds)
+                # Apply transformation
                 combo_transformed = self.transform(combo)
 
-                # 5. Unpack back to original shapes
                 voxel_transformed_flat = combo_transformed[:-2]
                 gray_f_final = combo_transformed[-2:-1]
                 gray_l_final = combo_transformed[-1:]
 
-                voxel_tensor = voxel_transformed_flat.view(2, self.num_bins, 256, 256).permute(0, 2, 3, 1)
-
+                # Reshape back to the 4D layout
+                voxel_tensor = voxel_transformed_flat.view(self.num_bins, 2, 256, 256)
             else:
                 if gray_f.shape == (260, 346):
                     gray_f = gray_f[2:258, 45:301]
@@ -153,7 +150,7 @@ class DatasetTest(Dataset):
             self.length = d_set['davis']['left']['image_raw'].shape[0]
 
     def __getitem__(self, index):
-        voxel_0 = torch.zeros(2, 256, 256, self.num_bins)
+        voxel_0 = torch.zeros(self.num_bins, 2, 256, 256)
         
         ts_f = self.gray_image_ts[index]
         ts_l = self.gray_image_ts[index + self.dt] if index + self.dt < self.length else 0.0
@@ -170,20 +167,18 @@ class DatasetTest(Dataset):
             if events_packed is None or len(events_packed) == 0:
                 return voxel_0, ts_f, ts_l
 
-            # 2. Generate the Voxel Grid
-            # Returns shape: [num_bins * 2, H, W]
-            voxel_flat = events_to_voxel_grid(
+            # 2. Generate the Voxel Grid on GPU for speed
+            voxel_tensor = events_to_voxel_grid(
                 events_packed,
                 num_bins=self.num_bins,
                 height=256,
                 width=256
             )
 
-            # 3. Reshape and Permute for SNN 
-            # [Channels, Height, Width, Time] -> [2, 256, 256, num_bins]
-            voxel_tensor = voxel_flat.view(self.num_bins, 2, 256, 256).permute(1, 2, 3, 0)
+            # ---> Move back to CPU <---
+            voxel_tensor = voxel_tensor.cpu()
 
-            # Standardize the voxel grid to prevent SNN saturation
+            # 3. Standardize the voxel grid to prevent SNN saturation
             mask = voxel_tensor != 0
             if mask.any():
                 mean = voxel_tensor[mask].mean()
