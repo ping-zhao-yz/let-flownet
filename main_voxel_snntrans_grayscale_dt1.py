@@ -103,10 +103,12 @@ def train(train_loader, model, optimizer, epoch, train_writer):
     for i_batch, data in enumerate(train_loader, 0):
         voxel_tensor, former_gray, latter_gray = data
 
+        voxel_nonzero_count = torch.count_nonzero(voxel_tensor)
         if i_batch % 100 == 0:
-            print(f"Batch {i_batch} received. Sum of voxels: {torch.sum(voxel_tensor)}")
+            print(f"Batch {i_batch} received. Count of non-zero voxels: {voxel_nonzero_count}")
 
-        if torch.sum(voxel_tensor) > 0:
+        # check if there are any non-zero elements
+        if voxel_nonzero_count > 0:
             print_details = valid_batches % print_freq == 0
 
             # No need for initInputRepresentation; shape is already [Batch, 2, H, W, num_bins]
@@ -179,7 +181,8 @@ def validate(test_loader, model, epoch, output_writers):
         if 'outdoor_day1' in test_env and i_batch >= 800:
             break
 
-        if torch.sum(voxel_tensor) > 0:
+        # check if there are any non-zero elements
+        if torch.count_nonzero(voxel_tensor) > 0:
             event_data = voxel_tensor.to(device)
 
             # compute output
