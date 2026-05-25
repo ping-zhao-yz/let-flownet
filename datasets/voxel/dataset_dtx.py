@@ -105,17 +105,9 @@ class DatasetTrain(Dataset):
                 gray_f_final = combo_transformed[-2:-1]
                 gray_l_final = combo_transformed[-1:]
 
-                # Max-Scaling keeps SNN inputs purely Excitatory (positive) between [0, 1]
-                if voxel_transformed_flat.max() > 0:
-                    voxel_transformed_flat = voxel_transformed_flat / voxel_transformed_flat.max()
-
                 # Reshape and move Time to the last dimension for the SNN
                 voxel_tensor = voxel_transformed_flat.view(self.num_bins, 2, 256, 256).permute(1, 2, 3, 0)
             else:
-                # Max-Scaling keeps SNN inputs purely Excitatory (positive) between [0, 1]
-                if voxel_tensor.max() > 0:
-                    voxel_tensor = voxel_tensor / voxel_tensor.max()
-
                 voxel_tensor = voxel_tensor.permute(1, 2, 3, 0)
 
                 if gray_f.shape == (260, 346):
@@ -178,10 +170,6 @@ class DatasetTest(Dataset):
 
             # ---> Move back to CPU <---
             voxel_tensor = voxel_tensor.cpu().permute(1, 2, 3, 0)
-
-            # Max-Scaling keeps SNN inputs purely Excitatory (positive) between [0, 1]
-            if voxel_tensor.max() > 0:
-                voxel_tensor = voxel_tensor / voxel_tensor.max()
 
             return voxel_tensor, ts_f, ts_l
         else:
