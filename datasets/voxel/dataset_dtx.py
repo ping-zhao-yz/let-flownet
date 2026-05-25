@@ -92,8 +92,8 @@ class DatasetTrain(Dataset):
                 gray_l_t = torch.from_numpy(gray_l).float().unsqueeze(0)
                 
                 # Normalize images
-                gray_f_t = gray_f_t / (torch.max(gray_f_t) + 1e-6)
-                gray_l_t = gray_l_t / (torch.max(gray_l_t) + 1e-6)
+                gray_f_t = gray_f_t / 255.0
+                gray_l_t = gray_l_t / 255.0
 
                 # Concatenate on the CPU safely
                 combo = torch.cat([voxel_flat, gray_f_t, gray_l_t], dim=0)
@@ -105,36 +105,27 @@ class DatasetTrain(Dataset):
                 gray_f_final = combo_transformed[-2:-1]
                 gray_l_final = combo_transformed[-1:]
 
-                # Standardize AFTER the crop/flip ensures the actual input to SNN is calibrated
-                mask = voxel_transformed_flat != 0
-                if mask.any():
-                    mean = voxel_transformed_flat[mask].mean()
-                    std = voxel_transformed_flat[mask].std()
-                    if std > 0:
-                        voxel_transformed_flat[mask] = (voxel_transformed_flat[mask] - mean) / std
-                    else:
-                        voxel_transformed_flat[mask] = voxel_transformed_flat[mask] - mean
+                # Max-Scaling keeps SNN inputs purely Excitatory (positive) between [0, 1]
+                if voxel_transformed_flat.max() > 0:
+                    voxel_transformed_flat = voxel_transformed_flat / voxel_transformed_flat.max()
 
                 # Reshape and move Time to the last dimension for the SNN
                 voxel_tensor = voxel_transformed_flat.view(self.num_bins, 2, 256, 256).permute(1, 2, 3, 0)
             else:
-                # Standardize AFTER the crop/flip ensures the actual input to SNN is calibrated
-                mask = voxel_tensor != 0
-                if mask.any():
-                    mean = voxel_tensor[mask].mean()
-                    std = voxel_tensor[mask].std()
-                    if std > 0:
-                        voxel_tensor[mask] = (voxel_tensor[mask] - mean) / std
-                    else:
-                        voxel_tensor[mask] = voxel_tensor[mask] - mean
+                # Max-Scaling keeps SNN inputs purely Excitatory (positive) between [0, 1]
+                if voxel_tensor.max() > 0:
+                    voxel_tensor = voxel_tensor / voxel_tensor.max()
 
                 voxel_tensor = voxel_tensor.permute(1, 2, 3, 0)
 
                 if gray_f.shape == (260, 346):
                     gray_f = gray_f[2:258, 45:301]
                     gray_l = gray_l[2:258, 45:301]
-                gray_f_final = torch.from_numpy(gray_f).float().unsqueeze(0).to(voxel_flat.device)
-                gray_l_final = torch.from_numpy(gray_l).float().unsqueeze(0).to(voxel_flat.device)
+                
+                # FIX 1: Add / 255.0 normalization
+                # FIX 2: Change voxel_flat.device to voxel_tensor.device
+                gray_f_final = (torch.from_numpy(gray_f).float() / 255.0).unsqueeze(0).to(voxel_tensor.device)
+                gray_l_final = (torch.from_numpy(gray_l).float() / 255.0).unsqueeze(0).to(voxel_tensor.device)
 
             # Final Return
             if torch.max(voxel_tensor) > 0 and torch.max(gray_f_final) > 0 and torch.max(gray_l_final) > 0:
@@ -188,15 +179,9 @@ class DatasetTest(Dataset):
             # ---> Move back to CPU <---
             voxel_tensor = voxel_tensor.cpu().permute(1, 2, 3, 0)
 
-            # 3. Standardize the voxel grid to prevent SNN saturation
-            mask = voxel_tensor != 0
-            if mask.any():
-                mean = voxel_tensor[mask].mean()
-                std = voxel_tensor[mask].std()
-                if std > 0:
-                    voxel_tensor[mask] = (voxel_tensor[mask] - mean) / std
-                else:
-                    voxel_tensor[mask] = voxel_tensor[mask] - mean
+            # Max-Scaling keeps SNN inputs purely Excitatory (positive) between [0, 1]
+            if voxel_tensor.max() > 0:
+                voxel_tensor = voxel_tensor / voxel_tensor.max()
 
             return voxel_tensor, ts_f, ts_l
         else:
