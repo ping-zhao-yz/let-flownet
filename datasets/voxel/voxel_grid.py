@@ -53,9 +53,9 @@ def events_to_voxel_grid(events, num_bins, height, width, device=torch.device('c
         vals_left = 1.0 - dts
         vals_right = dts
 
-        # 6. Masks for routing to the correct channel
-        mask_pos = (pols == 1.0)
-        mask_neg = (pols == -1.0)
+        # 6. Masks for routing to the correct channel safely
+        mask_pos = (pols > 0.0)
+        mask_neg = (pols <= 0.0)    # Catches 0.0 (MVSEC default) and -1.0
 
         # Base flat index: x + y*W + t*(2*H*W)
         # Channel offsets: Pos = 0, Neg = H*W
