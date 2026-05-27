@@ -45,7 +45,8 @@ class Let_Flownet_Voxel(BaseModel):
                 if m.bias is not None:
                     constant_(m.bias, 0)
 
-        time_step = dt * 10 * 1e-3
+        # Divide the total window time by the number of bins to get the time per step
+        time_step = (dt * 10 * 1e-3) / self.args.num_bins
         self.alpha = np.exp(-time_step/self.args.tau)
 
         # Transformers

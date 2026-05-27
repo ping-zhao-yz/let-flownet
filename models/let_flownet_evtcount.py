@@ -45,7 +45,7 @@ class Let_Flownet_EvtCount(BaseModel):
                 if m.bias is not None:
                     constant_(m.bias, 0)
 
-        time_step = dt * 10 * 1e-3
+        time_step = (dt * 10 * 1e-3) / input.size(4)
         self.alpha = np.exp(-time_step/self.args.tau)
 
         # Transformers
