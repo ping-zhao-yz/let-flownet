@@ -82,7 +82,7 @@ save_dir = 'let_flownet_voxel_dt1_output'
 
 arch = "let_flownet_voxel"
 
-lr = 1e-4
+lr = 2e-4
 epochs = 100
 batch_size = 8
 iter_g = 0
@@ -394,7 +394,7 @@ def main():
         optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs
     )
     scheduler_multistep = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer, milestones=[5, 10, 20, 30, 40, 50, 70, 90], gamma=0.7
+        optimizer, milestones=[15, 30, 45, 60, 80], gamma=0.5
     )
     scheduler = torch.optim.lr_scheduler.SequentialLR(
         optimizer, schedulers=[scheduler_warmup, scheduler_multistep], milestones=[warmup_epochs]
