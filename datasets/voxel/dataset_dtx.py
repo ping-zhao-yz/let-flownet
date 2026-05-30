@@ -105,14 +105,14 @@ class DatasetTrain(Dataset):
                 gray_f_final = combo_transformed[-2:-1]
                 gray_l_final = combo_transformed[-1:]
 
-                # Compress extreme outliers while preserving small positive signals
-                voxel_transformed_flat = torch.log1p(voxel_transformed_flat)
+                # Compress extreme outliers via clamping to preserve normal 1.0 signals!
+                voxel_transformed_flat = torch.clamp(voxel_transformed_flat, max=5.0)
 
                 # Reshape and move Time to the last dimension for the SNN
                 voxel_tensor = voxel_transformed_flat.view(self.num_bins, 2, 256, 256).permute(1, 2, 3, 0)
             else:
-                # Compress extreme outliers while preserving small positive signals
-                voxel_tensor = torch.log1p(voxel_tensor)
+                # Compress extreme outliers via clamping to preserve normal 1.0 signals!
+                voxel_tensor = torch.clamp(voxel_tensor, max=5.0)
                 
                 voxel_tensor = voxel_tensor.permute(1, 2, 3, 0)
 
@@ -174,8 +174,8 @@ class DatasetTest(Dataset):
                 width=256
             )
 
-            # Compress extreme outliers while preserving small positive signals
-            voxel_tensor = torch.log1p(voxel_tensor)
+            # Compress extreme outliers via clamping to preserve normal 1.0 signals!
+            voxel_tensor = torch.clamp(voxel_tensor, max=5.0)
             
             # ---> Move back to CPU <---
             voxel_tensor = voxel_tensor.cpu().permute(1, 2, 3, 0)
