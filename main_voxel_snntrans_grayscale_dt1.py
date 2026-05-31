@@ -82,7 +82,7 @@ save_dir = 'let_flownet_voxel_dt1_output'
 
 arch = "let_flownet_voxel"
 
-lr = 5e-5
+lr = 1e-4
 epochs = 100
 batch_size = 8
 iter_g = 0
@@ -400,12 +400,11 @@ def main():
         optimizer, schedulers=[scheduler_warmup, scheduler_multistep], milestones=[warmup_epochs]
     )
 
+    # Use strict rigid transformations to preserve SNN spike density and physical scaling
     co_transform = transforms.Compose([
+        transforms.RandomCrop((256, 256)),
         transforms.RandomHorizontalFlip(0.5),
-        transforms.RandomVerticalFlip(0.5),
-        transforms.RandomRotation(30, interpolation=InterpolationMode.BILINEAR),
-        transforms.RandomResizedCrop((256, 256), scale=(
-            0.5, 1.0), ratio=(0.75, 1.3333333333333333), interpolation=InterpolationMode.BILINEAR),
+        transforms.RandomVerticalFlip(0.5)
     ])
 
     Train_dataset = DatasetTrain(
