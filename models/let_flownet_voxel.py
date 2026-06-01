@@ -47,7 +47,13 @@ class Let_Flownet_Voxel(BaseModel):
 
         # Divide the total window time by the number of bins to get the time per step
         time_step = (dt * 10 * 1e-3) / self.args.num_bins
-        self.alpha = np.exp(-time_step/self.args.tau)
+
+        # Initialize separate learnable alpha parameters for each channel depth
+        init_alpha = np.exp(-time_step / self.args.tau)
+        self.alpha1 = torch.nn.Parameter(torch.full((1, 64, 1, 1), init_alpha, dtype=torch.float32))
+        self.alpha2 = torch.nn.Parameter(torch.full((1, 128, 1, 1), init_alpha, dtype=torch.float32))
+        self.alpha3 = torch.nn.Parameter(torch.full((1, 256, 1, 1), init_alpha, dtype=torch.float32))
+        self.alpha4 = torch.nn.Parameter(torch.full((1, 512, 1, 1), init_alpha, dtype=torch.float32))
 
         # Transformers
         norm = self.args.norm
@@ -114,7 +120,6 @@ class Let_Flownet_Voxel(BaseModel):
 
         # Encoder-SNN: temporal feature extraction
         threshold = sp_threshold
-        alpha = self.alpha
 
         mem_1 = torch.zeros(input.size(0), 64, int(
             image_resize/2), int(image_resize/2)).to(input.device)
@@ -138,22 +143,22 @@ class Let_Flownet_Voxel(BaseModel):
             input11 = input[:, :, :, :, i].to(input.device)
 
             current_1 = self.conv_s1(input11)
-            mem_1 = alpha*mem_1 + current_1
+            mem_1 = torch.sigmoid(self.alpha1) * mem_1 + current_1
             mem_1, spike_1 = LIF_Neuron(mem_1, threshold)
             mem_1_total = mem_1_total + current_1
 
             current_2 = self.conv_s2(spike_1)
-            mem_2 = alpha*mem_2 + current_2
+            mem_2 = torch.sigmoid(self.alpha2) * mem_2 + current_2
             mem_2, spike_2 = LIF_Neuron(mem_2, threshold)
             mem_2_total = mem_2_total + current_2
 
             current_3 = self.conv_s3(spike_2)
-            mem_3 = alpha*mem_3 + current_3
+            mem_3 = torch.sigmoid(self.alpha3) * mem_3 + current_3
             mem_3, spike_3 = LIF_Neuron(mem_3, threshold)
             mem_3_total = mem_3_total + current_3
 
             current_4 = self.conv_s4(spike_3)
-            mem_4 = alpha*mem_4 + current_4
+            mem_4 = torch.sigmoid(self.alpha4) * mem_4 + current_4
             mem_4, spike_4 = LIF_Neuron(mem_4, threshold)
             mem_4_total = mem_4_total + current_4
 
