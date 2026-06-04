@@ -83,7 +83,7 @@ class DatasetTrain(Dataset):
                 # Flatten the 4D tensor to 3D for concatenation
                 voxel_flat = voxel_tensor.view(2 * self.num_bins, 256, 256)
                 
-                # Keep images on CPU (Remove the .to(device) if you added it earlier)
+                # Keep images on CPU
                 if gray_f.shape == (260, 346):
                     gray_f = gray_f[2:258, 45:301]
                     gray_l = gray_l[2:258, 45:301]
@@ -98,32 +98,56 @@ class DatasetTrain(Dataset):
                 # Concatenate on the CPU safely
                 combo = torch.cat([voxel_flat, gray_f_t, gray_l_t], dim=0)
 
-                # Apply transformation
+                # Apply spatial transformation
                 combo_transformed = self.transform(combo)
 
                 voxel_transformed_flat = combo_transformed[:-2]
                 gray_f_final = combo_transformed[-2:-1]
                 gray_l_final = combo_transformed[-1:]
 
-                # Compress outliers to preserve normal 1.0 signals and normalize to [0, 1] for Transformer stability
+                # Compress outliers and normalize
                 voxel_transformed_flat = torch.clamp(voxel_transformed_flat, max=5.0) / 5.0
 
-                # Reshape and move Time to the last dimension for the SNN
-                voxel_tensor = voxel_transformed_flat.view(self.num_bins, 2, 256, 256).permute(1, 2, 3, 0)
-            else:
-                # Compress outliers to preserve normal 1.0 signals and normalize to [0, 1] for Transformer stability
-                voxel_tensor = torch.clamp(voxel_tensor, max=5.0) / 5.0
-                
+                # Reshape back to 4D [num_bins, 2, H, W] so we can safely manipulate Time
+                voxel_tensor = voxel_transformed_flat.view(self.num_bins, 2, 256, 256)
+
+                # ---> NEW: Temporal Reversal Augmentation <---
+                if random.random() > 0.5:
+                    # Time is dim=0. Flip it!
+                    voxel_tensor = torch.flip(voxel_tensor, dims=[0])
+                    
+                    # Swap the photometric target images
+                    temp_gray = gray_f_final
+                    gray_f_final = gray_l_final
+                    gray_l_final = temp_gray
+
+                # Move Time to the last dimension for the SNN [2, 256, 256, num_bins]
                 voxel_tensor = voxel_tensor.permute(1, 2, 3, 0)
+
+            else:
+                # Compress outliers and normalize
+                voxel_tensor = torch.clamp(voxel_tensor, max=5.0) / 5.0
 
                 if gray_f.shape == (260, 346):
                     gray_f = gray_f[2:258, 45:301]
                     gray_l = gray_l[2:258, 45:301]
                 
-                # FIX 1: Add / 255.0 normalization
-                # FIX 2: Change voxel_flat.device to voxel_tensor.device
+                # FIX 1: Define the gray final variables FIRST before trying to swap them
                 gray_f_final = (torch.from_numpy(gray_f).float() / 255.0).unsqueeze(0).to(voxel_tensor.device)
                 gray_l_final = (torch.from_numpy(gray_l).float() / 255.0).unsqueeze(0).to(voxel_tensor.device)
+
+                # ---> NEW: Temporal Reversal Augmentation <---
+                if random.random() > 0.5:
+                    # FIX 2: Time is dim=0 at this stage [num_bins, 2, H, W]
+                    voxel_tensor = torch.flip(voxel_tensor, dims=[0])
+                    
+                    # Swap the photometric target images
+                    temp_gray = gray_f_final
+                    gray_f_final = gray_l_final
+                    gray_l_final = temp_gray
+
+                # Move Time to the last dimension for the SNN [2, 256, 256, num_bins]
+                voxel_tensor = voxel_tensor.permute(1, 2, 3, 0)
 
             # Final Return
             if torch.max(voxel_tensor) > 0 and torch.max(gray_f_final) > 0 and torch.max(gray_l_final) > 0:

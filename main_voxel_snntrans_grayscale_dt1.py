@@ -82,7 +82,7 @@ save_dir = 'let_flownet_voxel_dt1_output'
 
 arch = "let_flownet_voxel"
 
-lr = 1e-4
+lr = 5e-5
 epochs = 100
 batch_size = 8
 iter_g = 0
