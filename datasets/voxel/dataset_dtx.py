@@ -113,8 +113,9 @@ class DatasetTrain(Dataset):
 
                 # ---> NEW: Temporal Reversal Augmentation <---
                 if random.random() > 0.5:
-                    # Time is dim=0. Flip it!
-                    voxel_tensor = torch.flip(voxel_tensor, dims=[0])
+                    # Time is dim=0, Polarity is dim=1 at this stage - [num_bins, 2, H, W]
+                    # We must flip BOTH to maintain true event camera physics!
+                    voxel_tensor = torch.flip(voxel_tensor, dims=[0, 1])
                     
                     # Swap the photometric target images
                     temp_gray = gray_f_final
@@ -138,8 +139,9 @@ class DatasetTrain(Dataset):
 
                 # ---> NEW: Temporal Reversal Augmentation <---
                 if random.random() > 0.5:
-                    # FIX 2: Time is dim=0 at this stage [num_bins, 2, H, W]
-                    voxel_tensor = torch.flip(voxel_tensor, dims=[0])
+                    # Time is dim=0, Polarity is dim=1 at this stage - [num_bins, 2, H, W]
+                    # We must flip BOTH to maintain true event camera physics!
+                    voxel_tensor = torch.flip(voxel_tensor, dims=[0, 1])
                     
                     # Swap the photometric target images
                     temp_gray = gray_f_final
