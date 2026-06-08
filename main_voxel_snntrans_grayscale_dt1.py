@@ -12,8 +12,8 @@ import torchvision.transforms as transforms
 
 from datetime import datetime
 from tensorboardX import SummaryWriter
-from torch.utils.data import DataLoader
-from torchvision.transforms import InterpolationMode
+from torch.utils.data import ConcatDataset, DataLoader
+
 from util.loss_util import AverageMeter
 from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
@@ -21,7 +21,6 @@ from datasets.voxel.dataset_dtx import DatasetTest, DatasetTrain
 from models import let_flownet_voxel
 from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss_single
 from loss.photometric_loss_backward import photometric_loss_backward
-
 
 parser = argparse.ArgumentParser(description='let_flownet_voxel training on several datasets',
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -56,6 +55,9 @@ parser.add_argument('--sp_threshold', type=float, default=0.75, help='spike thre
 
 parser.add_argument('--num_bins', type=int, default=10, help='number of temporal bins for voxel grid')
 
+parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-fpv'],
+                    help='dataset for training')
+
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
 
@@ -77,6 +79,8 @@ test_env = args.test_env
 train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
 test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
 test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
+
+uzh_fpv_dataset_path = '../../../dataset/Event/uzh-fpv/data/'
 
 save_dir = 'let_flownet_voxel_dt1_output'
 
@@ -326,7 +330,7 @@ def main():
     best_EPE = -1
     evaluate_interval = 3
 
-    val_fail_times_max = 8
+    val_fail_times_max = 15
     val_fail_times = 0
 
     d_label = h5py.File(test_gt_file, 'r')
@@ -353,8 +357,8 @@ def main():
         output_writers.append(SummaryWriter(
             os.path.join(save_path, 'test', str(i))))
 
-    Test_dataset = DatasetTest(args.dt, test_src_file, gt_start_time=gt_start, num_bins=args.num_bins)
-    test_loader = DataLoader(dataset=Test_dataset,
+    test_dataset = DatasetTest(args.dt, test_src_file, gt_start_time=gt_start, num_bins=args.num_bins)
+    test_loader = DataLoader(dataset=test_dataset,
                              batch_size=1,
                              shuffle=False,
                              num_workers=workers)
@@ -407,12 +411,58 @@ def main():
         transforms.RandomVerticalFlip(0.5)
     ])
 
-    Train_dataset = DatasetTrain(
-        args.dt, train_src_file, transform=co_transform, num_bins=args.num_bins)
-    train_loader = DataLoader(dataset=Train_dataset,
-                              batch_size=batch_size,
-                              shuffle=True,
-                              num_workers=workers)
+    assert (args.train_dataset in ['mvsec', 'uzh-fpv'])
+
+    if args.train_dataset == 'mvsec':
+        train_datasets = DatasetTrain(
+            args.dt,
+            train_src_file,
+            transform=co_transform,
+            num_bins=args.num_bins
+        )
+        train_loader = DataLoader(
+            dataset=train_datasets,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=workers
+        )
+    elif args.train_dataset == 'uzh-fpv':
+        uzh_datasets = [
+            uzh_fpv_dataset_path + 'indoor_forward_3.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_5.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_6.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_7.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_8.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_9.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_10.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_11.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_12.h5'
+        ]
+        
+        # Initialize individual DatasetTrain objects and store them in a list
+        train_datasets = []
+        for dataset_path in uzh_datasets:
+            print(f"Loading UZH FPV dataset {dataset_path}...")
+            train_datasets.append(
+                DatasetTrain(
+                    args.dt, 
+                    dataset_path, 
+                    transform=co_transform, 
+                    num_bins=args.num_bins
+                )
+            )
+
+        # Mathematically stitch them together into one massive dataset
+        massive_train_dataset = ConcatDataset(train_datasets)
+
+        train_loader = DataLoader(
+            dataset=massive_train_dataset, 
+            batch_size=batch_size, 
+            shuffle=True, 
+            num_workers=workers, 
+            pin_memory=True, 
+            drop_last=True
+        )
 
     for epoch in range(args.start_epoch, epochs):
 
@@ -421,6 +471,8 @@ def main():
 
         train_loss = train(train_loader, model, optimizer, epoch, train_writer)
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
+
+        print(f"Mean Training Loss: {train_loss:.3f}")
 
         scheduler.step()
 
@@ -441,12 +493,19 @@ def main():
                 val_fail_times += 1
 
             if val_fail_times >= val_fail_times_max:
-                print(
-                    "Epoch {}: validation failed for consective {} times".format(
-                        epoch, val_fail_times
+                if args.train_dataset == 'mvsec':
+                    print(
+                        "Epoch {}: validation failed for consective {} times".format(
+                            epoch, val_fail_times
+                        )
                     )
-                )
-                break
+                    break
+                elif args.train_dataset == 'uzh-fpv':
+                    print(
+                        "Epoch {}: validation failed for consective {} times, still continue as this is pre-training on UZH-FPV dataset".format(
+                            epoch, val_fail_times
+                        )
+                    )
 
             is_best = EPE < best_EPE
             best_EPE = min(EPE, best_EPE)

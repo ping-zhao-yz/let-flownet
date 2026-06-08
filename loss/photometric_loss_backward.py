@@ -138,7 +138,4 @@ def photometric_loss_backward(prev_images_temp, next_images_temp, event_images, 
     # Pass the mask to charbonnier to ignore blank regions
     photometric_loss = charbonnier_loss(error_temp_backward, mask=valid_mask)
 
-    if print_details:
-        print('photometric_loss: {0}'.format(photometric_loss.item()))
-
     return photometric_loss
