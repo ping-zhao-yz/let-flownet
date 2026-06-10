@@ -80,7 +80,7 @@ train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
 test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
 test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
-uzh_fpv_dataset_path = '../../../dataset/Event/uzh-fpv/data/'
+uzh_fpv_dataset_path = '/media/windows_data/code/research/dataset/Event/uzh-fpv/data/'
 
 save_dir = 'let_flownet_voxel_dt1_output'
 
@@ -472,7 +472,8 @@ def main():
         train_loss = train(train_loader, model, optimizer, epoch, train_writer)
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
 
-        print(f"Mean Training Loss: {train_loss:.3f}")
+        print(f"Mean Training Loss: {train_loss:.3f} of epoch {epoch}")
+        print('-------------------------------------------------------')
 
         scheduler.step()
 
