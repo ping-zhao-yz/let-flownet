@@ -4,6 +4,7 @@ import h5py
 import numpy as np
 import os
 import os.path
+import random
 import torch
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
@@ -326,7 +327,7 @@ def validate(test_loader, model, epoch, output_writers):
 def main():
     global args
 
-    workers = 0
+    workers = 8
     best_EPE = -1
     evaluate_interval = 3
 
@@ -456,36 +457,46 @@ def main():
         ]
         
         # Initialize individual DatasetTrain objects and store them in a list
-        train_datasets = []
+        train_loader = []
         for dataset_path in uzh_datasets:
             print(f"Loading UZH FPV dataset {dataset_path}...")
-            train_datasets.append(
-                DatasetTrain(
-                    args.dt, 
-                    dataset_path, 
-                    transform=co_transform, 
-                    num_bins=args.num_bins
-                )
+            single_dataset = DatasetTrain(
+                args.dt, 
+                dataset_path, 
+                transform=co_transform, 
+                num_bins=args.num_bins
             )
-
-        # Mathematically stitch them together into one massive dataset
-        massive_train_dataset = ConcatDataset(train_datasets)
-
-        train_loader = DataLoader(
-            dataset=massive_train_dataset, 
-            batch_size=batch_size, 
-            shuffle=True, 
-            num_workers=workers, 
-            pin_memory=True, 
-            drop_last=True
-        )
+            # Create a separate loader for EACH file
+            single_loader = DataLoader(
+                dataset=single_dataset, 
+                batch_size=batch_size, 
+                shuffle=True, 
+                num_workers=workers, 
+                pin_memory=True, 
+                drop_last=True
+            )
+            train_loader.append(single_loader)
 
     for epoch in range(args.start_epoch, epochs):
 
         current_lr = optimizer.param_groups[0]['lr']
         print(f"Learning Rate: {current_lr:.6f}")
 
-        train_loss = train(train_loader, model, optimizer, epoch, train_writer)
+        if args.train_dataset == 'uzh-fpv':
+            # Shuffle the order we read the 9 HDF5 files every epoch
+            random.shuffle(train_loader)
+            
+            epoch_loss = 0
+            for loader in train_loader:
+                # Train fully on one file before moving to the next
+                loss = train(loader, model, optimizer, epoch, train_writer)
+                epoch_loss += loss
+            
+            train_loss = epoch_loss / len(train_loader)
+        else:
+            # Standard MVSEC single-loader logic
+            train_loss = train(train_loader, model, optimizer, epoch, train_writer)
+
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
 
         print(f"Mean Training Loss: {train_loss:.3f} of epoch {epoch}")
