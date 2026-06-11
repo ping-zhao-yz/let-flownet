@@ -49,11 +49,15 @@ class Let_Flownet_Voxel(BaseModel):
         time_step = (dt * 10 * 1e-3) / self.args.num_bins
 
         # Initialize separate learnable alpha parameters for each channel depth
-        init_alpha = np.exp(-time_step / self.args.tau)
-        self.alpha1 = torch.nn.Parameter(torch.full((1, 64, 1, 1), init_alpha, dtype=torch.float32))
-        self.alpha2 = torch.nn.Parameter(torch.full((1, 128, 1, 1), init_alpha, dtype=torch.float32))
-        self.alpha3 = torch.nn.Parameter(torch.full((1, 256, 1, 1), init_alpha, dtype=torch.float32))
-        self.alpha4 = torch.nn.Parameter(torch.full((1, 512, 1, 1), init_alpha, dtype=torch.float32))
+        # Calculate target decay
+        target_alpha = np.exp(-time_step / self.args.tau)
+        # Convert to logit for the sigmoid in the forward pass
+        init_logit = math.log(target_alpha / (1.0 - target_alpha))
+
+        self.alpha1 = torch.nn.Parameter(torch.full((1, 64, 1, 1), init_logit, dtype=torch.float32))
+        self.alpha2 = torch.nn.Parameter(torch.full((1, 128, 1, 1), init_logit, dtype=torch.float32))
+        self.alpha3 = torch.nn.Parameter(torch.full((1, 256, 1, 1), init_logit, dtype=torch.float32))
+        self.alpha4 = torch.nn.Parameter(torch.full((1, 512, 1, 1), init_logit, dtype=torch.float32))
 
         # Transformers
         norm = self.args.norm

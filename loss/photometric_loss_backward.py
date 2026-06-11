@@ -76,11 +76,20 @@ def photometric_loss_backward_multiscale(prev_images_temp, next_images_temp, eve
             next_images_base, size=(height, width), mode='bilinear', align_corners=False
         )
         
-        # Resize mask using nearest neighbor to preserve hard 0/1 boundaries
-        event_mask_scaled = nn.functional.interpolate(
-            event_mask_base, size=(height, width), mode='nearest'
+        # Replace 'nearest' interpolation with max pooling to preserve sparse events
+        event_mask_scaled = nn.functional.adaptive_max_pool2d(
+            event_mask_base, output_size=(height, width)
         )
+
         valid_mask = (event_mask_scaled > 0).float()
+
+        # Boundary Margin: Ignore the outer 5% to prevent out-of-frame warping outliers
+        margin_y = max(1, int(height * 0.05))
+        margin_x = max(1, int(width * 0.05))
+        valid_mask[:, :, :margin_y, :] = 0
+        valid_mask[:, :, -margin_y:, :] = 0
+        valid_mask[:, :, :, :margin_x] = 0
+        valid_mask[:, :, :, -margin_x:] = 0
 
         #3. Calculate Loss
         next_images_warped = backward_warp(next_images_scaled, flow)
@@ -125,12 +134,21 @@ def photometric_loss_backward(prev_images_temp, next_images_temp, event_images, 
         next_images_base, size=(height, width), mode='bilinear', align_corners=False
     )
     
-    # Resize mask using nearest neighbor
-    event_mask_scaled = nn.functional.interpolate(
-        event_mask_base, size=(height, width), mode='nearest'
+    # Replace 'nearest' interpolation with max pooling to preserve sparse events
+    event_mask_scaled = nn.functional.adaptive_max_pool2d(
+        event_mask_base, output_size=(height, width)
     )
+    
     valid_mask = (event_mask_scaled > 0).float()
 
+    # Boundary Margin: Ignore the outer 5% to prevent out-of-frame warping outliers
+    margin_y = max(1, int(height * 0.05))
+    margin_x = max(1, int(width * 0.05))
+    valid_mask[:, :, :margin_y, :] = 0
+    valid_mask[:, :, -margin_y:, :] = 0
+    valid_mask[:, :, :, :margin_x] = 0
+    valid_mask[:, :, :, -margin_x:] = 0
+    
     # 3. Calculate Loss
     next_images_warped = backward_warp(next_images_scaled, flow)
     error_temp_backward = next_images_warped - prev_images_scaled
