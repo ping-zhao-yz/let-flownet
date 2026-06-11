@@ -66,7 +66,8 @@ class DatasetTrain(Dataset):
                 events_packed,
                 num_bins=self.num_bins,
                 height=256,
-                width=256
+                width=256,
+                device=torch.device('cpu')
             )
             
             # ---> CRITICAL FIX: Move back to CPU before Datloader collation! <---
@@ -197,7 +198,8 @@ class DatasetTest(Dataset):
                 events_packed,
                 num_bins=self.num_bins,
                 height=256,
-                width=256
+                width=256,
+                device=torch.device('cpu')
             )
 
             # Compress outliers to preserve normal 1.0 signals and normalize to [0, 1] for Transformer stability
