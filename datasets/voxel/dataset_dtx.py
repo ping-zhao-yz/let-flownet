@@ -61,7 +61,7 @@ class DatasetTrain(Dataset):
             if events_packed is None or len(events_packed) == 0:
                 return voxel_0, gray_0, gray_0
 
-            # 2. Generate the Voxel Grid on GPU for speed
+            # 2. Generate the Voxel Grid
             voxel_tensor = events_to_voxel_grid(
                 events_packed,
                 num_bins=self.num_bins,
@@ -69,9 +69,6 @@ class DatasetTrain(Dataset):
                 width=256,
                 device=torch.device('cpu')
             )
-            
-            # ---> CRITICAL FIX: Move back to CPU before Datloader collation! <---
-            voxel_tensor = voxel_tensor.cpu()
 
             # Fetch gray images
             with h5py.File(self.dataset_file, 'r') as d_set:
@@ -193,7 +190,7 @@ class DatasetTest(Dataset):
             if events_packed is None or len(events_packed) == 0:
                 return voxel_0, ts_f, ts_l
 
-            # 2. Generate the Voxel Grid on GPU for speed
+            # 2. Generate the Voxel Grid
             voxel_tensor = events_to_voxel_grid(
                 events_packed,
                 num_bins=self.num_bins,
@@ -206,7 +203,7 @@ class DatasetTest(Dataset):
             voxel_tensor = torch.clamp(voxel_tensor, max=5.0) / 5.0
             
             # ---> Move back to CPU <---
-            voxel_tensor = voxel_tensor.cpu().permute(1, 2, 3, 0)
+            voxel_tensor = voxel_tensor.permute(1, 2, 3, 0)
 
             return voxel_tensor, ts_f, ts_l
         else:
