@@ -62,6 +62,11 @@ parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-f
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
 
+parser.add_argument('--eval_int', type=int, default=3, choices=[3, 1, 2],
+                    help='evaluation interval: 3 for training from scratch; 1 for domain bridge; 2 for fine tuning')
+parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 4, 5],
+                    help='maximum failure times: 5 for training from scratch; 4 for domain bridge; 5 for fine tuning')
+
 args = parser.parse_args()
 
 # Initializations
@@ -329,9 +334,6 @@ def main():
 
     workers = 8
     best_EPE = -1
-    evaluate_interval = 3
-
-    val_fail_times_max = 15
     val_fail_times = 0
 
     d_label = h5py.File(test_gt_file, 'r')
@@ -505,7 +507,7 @@ def main():
         scheduler.step()
 
         # Test at every n epoch during training
-        if (epoch + 1) % evaluate_interval == 0:
+        if (epoch + 1) % args.eval_int == 0:
             # evaluate on validation set
             with torch.no_grad():
                 EPE = validate(test_loader, model, epoch, output_writers)
@@ -520,7 +522,7 @@ def main():
             else:
                 val_fail_times += 1
 
-            if val_fail_times >= val_fail_times_max:
+            if val_fail_times >= args.max_fail_times:
                 if args.train_dataset == 'mvsec':
                     print(
                         "Epoch {}: validation failed for consective {} times".format(
