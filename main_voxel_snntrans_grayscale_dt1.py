@@ -62,10 +62,12 @@ parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-f
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
 
-parser.add_argument('--eval_int', type=int, default=3, choices=[3, 1, 2],
-                    help='evaluation interval: 3 for training from scratch; 1 for domain bridge; 2 for fine tuning')
-parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 4, 5],
-                    help='maximum failure times: 5 for training from scratch; 4 for domain bridge; 5 for fine tuning')
+parser.add_argument('--eval_int', type=int, default=3, choices=[3, 1, 1],
+                    help='evaluation interval: 3 for training from scratch; 1 for domain bridge; 1 for fine tuning')
+parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 4, 10],
+                    help='maximum failure times: 5 for training from scratch; 4 for domain bridge; 10 for fine tuning')
+parser.add_argument('--warmup_epochs', type=int, default=3, choices=[3, 3, 1],
+                    help='warmup epochs for learning rate scheduler: 3 for training from scratch, 3 for domain bridge; 1 for fine tuning')
 
 args = parser.parse_args()
 
@@ -411,16 +413,15 @@ def main():
             {'params': alpha_params, 'lr': lr * 0.01, 'weight_decay': 0.0}
         ], lr=lr, momentum=0.9)
 
-    # Warmup for first 3 epochs, then multistep decay
-    warmup_epochs = 3
+    # Warmup for first n epochs, then multistep decay
     scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs
+        optimizer, start_factor=0.01, end_factor=1.0, total_iters=args.warmup_epochs
     )
     scheduler_multistep = torch.optim.lr_scheduler.MultiStepLR(
         optimizer, milestones=[15, 30, 45, 60, 80], gamma=0.5
     )
     scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer, schedulers=[scheduler_warmup, scheduler_multistep], milestones=[warmup_epochs]
+        optimizer, schedulers=[scheduler_warmup, scheduler_multistep], milestones=[args.warmup_epochs]
     )
 
     # Use strict rigid transformations to preserve SNN spike density and physical scaling
