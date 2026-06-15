@@ -39,11 +39,12 @@ def get_raw_events_for_window(dataset_file, index, dt, xoff=45, yoff=2, orig_w=3
     return events_packed
 
 class DatasetTrain(Dataset):
-    def __init__(self, dt, dataset_file, transform=None, num_bins=10):
-        self.transform = transform
+    def __init__(self, dt, dataset_file, transform=None, is_fine_tune=False, num_bins=10):
         self.dt = dt
-        self.num_bins = num_bins
         self.dataset_file = dataset_file
+        self.transform = transform
+        self.is_fine_tune = is_fine_tune
+        self.num_bins = num_bins
 
         with h5py.File(dataset_file, 'r') as d_set:
             self.length = d_set['davis']['left']['image_raw'].shape[0]
@@ -110,7 +111,7 @@ class DatasetTrain(Dataset):
                 voxel_tensor = voxel_transformed_flat.view(self.num_bins, 2, 256, 256)
 
                 # ---> NEW: Temporal Reversal Augmentation <---
-                if random.random() > 0.5:
+                if (not self.is_fine_tune) and (random.random() > 0.5):
                     # Time is dim=0, Polarity is dim=1 at this stage - [num_bins, 2, H, W]
                     # We must flip BOTH to maintain true event camera physics!
                     voxel_tensor = torch.flip(voxel_tensor, dims=[0, 1])
@@ -136,7 +137,7 @@ class DatasetTrain(Dataset):
                 gray_l_final = (torch.from_numpy(gray_l).float() / 255.0).unsqueeze(0).to(voxel_tensor.device)
 
                 # ---> NEW: Temporal Reversal Augmentation <---
-                if random.random() > 0.5:
+                if (not self.is_fine_tune) and (random.random() > 0.5):
                     # Time is dim=0, Polarity is dim=1 at this stage - [num_bins, 2, H, W]
                     # We must flip BOTH to maintain true event camera physics!
                     voxel_tensor = torch.flip(voxel_tensor, dims=[0, 1])
