@@ -101,7 +101,7 @@ batch_size = 8
 iter_g = 0
 
 
-def train(train_loader, model, optimizer, epoch, train_writer):
+def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     global iter_g, args, image_resize, sp_threshold
     np.set_printoptions(precision=2)
     losses = AverageMeter()
@@ -127,31 +127,35 @@ def train(train_loader, model, optimizer, epoch, train_writer):
             # No need for initInputRepresentation; shape is already [Batch, 2, H, W, num_bins]
             event_data = voxel_tensor.to(device)
 
-            # compute output
-            flow_predictions = model(event_data, image_resize, sp_threshold)
+            # --- MIXED PRECISION FORWARD PASS ---
+            with torch.amp.autocast("cuda",enabled=args.mixed_precision):
+                # compute output
+                flow_predictions = model(event_data, image_resize, sp_threshold)
 
-            # Photometric loss (sum along dim=4 to get the dense spatial map mask)
+                # Photometric loss
+                event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
+                photometric_loss = photometric_loss_backward(
+                    former_gray[:, 0, :, :].to(device), latter_gray[:, 0, :, :].to(device), 
+                    event_mask, flow_predictions, device, print_details, weights=multiscale_weights)
 
-            # Create a boolean mask of where events exist, sum the boolean flags, and clamp to 1.0
-            event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
+                # Smoothness loss
+                smoothness_loss = smooth_loss_single(flow_predictions)
 
-            photometric_loss = photometric_loss_backward(
-                former_gray[:, 0, :, :].to(device), latter_gray[:, 0, :, :].to(device), 
-                event_mask, flow_predictions, device, print_details, weights=multiscale_weights)
-
-            # Smoothness loss
-            smoothness_loss = smooth_loss_single(flow_predictions)
-
-            # total_loss
-            loss = photometric_loss + smoothness_loss
+                # total_loss
+                loss = photometric_loss + smoothness_loss
 
             optimizer.zero_grad()
-            loss.backward()
+            
+            # --- MIXED PRECISION BACKWARD PASS ---
+            scaler.scale(loss).backward()
 
-            # Add this line to stabilize the Transformer/SNN gradient flow
+            # Unscale the gradients BEFORE clipping to ensure the max_norm threshold is accurate
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-            optimizer.step()
+            # Step optimizer and update scaler
+            scaler.step(optimizer)
+            scaler.update()
 
             # record loss and EPE
             train_writer.add_scalar('train_loss', loss.item(), iter_g)
@@ -547,6 +551,9 @@ def main():
             )
             train_loader.append(single_loader)
 
+    # Initialize Mixed Precision Scaler
+    scaler = torch.cuda.amp.GradScaler(enabled=args.mixed_precision)
+
     for epoch in range(args.start_epoch, epochs):
 
         current_lr = optimizer.param_groups[0]['lr']
@@ -559,13 +566,13 @@ def main():
             epoch_loss = 0
             for loader in train_loader:
                 # Train fully on one file before moving to the next
-                loss = train(loader, model, optimizer, epoch, train_writer)
+                loss = train(loader, model, optimizer, epoch, train_writer, scaler)
                 epoch_loss += loss
             
             train_loss = epoch_loss / len(train_loader)
         else:
             # Standard MVSEC single-loader logic
-            train_loss = train(train_loader, model, optimizer, epoch, train_writer)
+            train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler)
 
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
 
