@@ -128,25 +128,38 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             event_data = voxel_tensor.to(device)
 
             # --- MIXED PRECISION FORWARD PASS ---
-            with torch.amp.autocast("cuda",enabled=args.mixed_precision):
-                # compute output
+            with torch.amp.autocast('cuda', enabled=args.mixed_precision):
+                # 1. Compute output (SNN + Transformer run in ultra-fast FP16)
                 flow_predictions = model(event_data, image_resize, sp_threshold)
 
-                # Photometric loss
-                event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
-                photometric_loss = photometric_loss_backward(
-                    former_gray[:, 0, :, :].to(device), latter_gray[:, 0, :, :].to(device), 
-                    event_mask, flow_predictions, device, print_details, weights=multiscale_weights)
+            # --- FORCE LOSS CALCULATION TO FP32 ---
+            # 2. Step OUTSIDE the autocast block and explicitly cast to float32.
+            # This prevents grid_sample and division underflow NaNs in the loss!
+            flow_preds_fp32 = flow_predictions.float()
+            
+            event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
+            
+            photometric_loss = photometric_loss_backward(
+                former_gray[:, 0, :, :].to(device).float(), 
+                latter_gray[:, 0, :, :].to(device).float(), 
+                event_mask, 
+                flow_preds_fp32, 
+                device, 
+                print_details, 
+                weights=multiscale_weights
+            )
 
-                # Smoothness loss
-                smoothness_loss = smooth_loss_single(flow_predictions)
+            # Smoothness loss
+            smoothness_loss = smooth_loss_single(flow_preds_fp32)
 
-                # total_loss
-                loss = photometric_loss + smoothness_loss
+            # total_loss
+            loss = photometric_loss + smoothness_loss
 
             optimizer.zero_grad()
             
             # --- MIXED PRECISION BACKWARD PASS ---
+            # The scaler will compute the loss gradients in safe FP32, and automatically 
+            # cast them back to FP16 when they flow backwards into the network layers.
             scaler.scale(loss).backward()
 
             # Unscale the gradients BEFORE clipping to ensure the max_norm threshold is accurate
