@@ -46,8 +46,9 @@ parser.add_argument('--tau', default=20*1e-3, help='time constant for Leaky Inte
 parser.add_argument('--num_enc_layers', default=2, help='number of transformer encoder layers')
 parser.add_argument('--num_dec_layers', default=2, help='number of transformer decoder layers')
 
-parser.add_argument('--mixed_precision', action='store_true',
-                    help='use mixed precision')
+parser.add_argument('--no_mixed_precision', dest='mixed_precision', action='store_false',
+                    help='disable mixed precision (default is ON)')
+parser.set_defaults(mixed_precision=True)
 
 parser.add_argument('--dropout', type=float, default=0.0)
 
@@ -407,68 +408,69 @@ def main():
     assert (args.solver in ['adam', 'sgd'])
     print(f'=> setting {args.solver} solver')
 
-    # Freeze SNN Encoder - START
-
-    # # 1. Safely extract PLIF decay parameters via .module
-    # alpha_params = [
-    #     model.module.alpha1, model.module.alpha2, model.module.alpha3, model.module.alpha4
-    # ]
-    # alpha_param_ids = list(map(id, alpha_params))
-
-    # # 2. Extract and filter bias/weight parameters to EXCLUDE the alpha params
-    # bias_params = [p for p in model.module.bias_parameters() if id(p) not in alpha_param_ids]
-    # weight_params = [p for p in model.module.weight_parameters() if id(p) not in alpha_param_ids]
-
-    # if args.solver == 'adam':
-    #     optimizer = torch.optim.Adam([
-    #         {'params': bias_params, 'weight_decay': 0.0},
-    #         {'params': weight_params, 'weight_decay': 4e-4},
-    #         {'params': alpha_params, 'lr': lr * 0.01, 'weight_decay': 0.0} # Ensure SNN decay parameters aren't flattened by L2
-    #     ], lr=lr)
-        
-    # elif args.solver == 'sgd':
-    #     optimizer = torch.optim.SGD([
-    #         {'params': bias_params, 'weight_decay': 0.0},
-    #         {'params': weight_params, 'weight_decay': 4e-4},
-    #         {'params': alpha_params, 'lr': lr * 0.01, 'weight_decay': 0.0}
-    #     ], lr=lr, momentum=0.9)
-
-    # 1. Identify all alpha parameters to ensure they are excluded from main weight groups
-    all_alphas = [
-        model.module.alpha1, model.module.alpha2, model.module.alpha3, model.module.alpha4
-    ]
-    alpha_param_ids = list(map(id, all_alphas))
-
-    # Safely extract PLIF decay parameters (ONLY IF UNFROZEN)
-    alpha_params = [p for p in all_alphas if p.requires_grad]
-
-    # 2. Extract and filter bias/weight parameters to EXCLUDE alpha params AND FROZEN params
-    bias_params = [
-        p for p in model.module.bias_parameters() 
-        if id(p) not in alpha_param_ids and p.requires_grad
-    ]
-    weight_params = [
-        p for p in model.module.weight_parameters() 
-        if id(p) not in alpha_param_ids and p.requires_grad
-    ]
-
-    # 3. Dynamically build the optimizer groups
-    optim_groups = [
-        {'params': bias_params, 'weight_decay': 0.0},
-        {'params': weight_params, 'weight_decay': 4e-4}
-    ]
+    if args.train_env == 'outdoor_day2':
+        #####################
+        # Freeze SNN Encoder
+        #####################
     
-    # Only append the alpha group if they are actually being trained (not frozen)
-    if len(alpha_params) > 0:
-        optim_groups.append({'params': alpha_params, 'lr': lr * 0.01, 'weight_decay': 0.0})
+        # 1. Identify all alpha parameters to ensure they are excluded from main weight groups
+        all_alphas = [
+            model.module.alpha1, model.module.alpha2, model.module.alpha3, model.module.alpha4
+        ]
+        alpha_param_ids = list(map(id, all_alphas))
 
-    if args.solver == 'adam':
-        optimizer = torch.optim.Adam(optim_groups, lr=lr)
+        # Safely extract PLIF decay parameters (ONLY IF UNFROZEN)
+        alpha_params = [p for p in all_alphas if p.requires_grad]
+
+        # 2. Extract and filter bias/weight parameters to EXCLUDE alpha params AND FROZEN params
+        bias_params = [
+            p for p in model.module.bias_parameters() 
+            if id(p) not in alpha_param_ids and p.requires_grad
+        ]
+        weight_params = [
+            p for p in model.module.weight_parameters() 
+            if id(p) not in alpha_param_ids and p.requires_grad
+        ]
+
+        # 3. Dynamically build the optimizer groups
+        optim_groups = [
+            {'params': bias_params, 'weight_decay': 0.0},
+            {'params': weight_params, 'weight_decay': 4e-4}
+        ]
         
-    elif args.solver == 'sgd':
-        optimizer = torch.optim.SGD(optim_groups, lr=lr, momentum=0.9)
+        # Only append the alpha group if they are actually being trained (not frozen)
+        if len(alpha_params) > 0:
+            optim_groups.append({'params': alpha_params, 'lr': lr * 0.01, 'weight_decay': 0.0})
 
-    # Freeze SNN Encoder - END
+        if args.solver == 'adam':
+            optimizer = torch.optim.Adam(optim_groups, lr=lr)
+            
+        elif args.solver == 'sgd':
+            optimizer = torch.optim.SGD(optim_groups, lr=lr, momentum=0.9)
+    else:
+        # 1. Safely extract PLIF decay parameters via .module
+        alpha_params = [
+            model.module.alpha1, model.module.alpha2, model.module.alpha3, model.module.alpha4
+        ]
+        alpha_param_ids = list(map(id, alpha_params))
+
+        # 2. Extract and filter bias/weight parameters to EXCLUDE the alpha params
+        bias_params = [p for p in model.module.bias_parameters() if id(p) not in alpha_param_ids]
+        weight_params = [p for p in model.module.weight_parameters() if id(p) not in alpha_param_ids]
+
+        if args.solver == 'adam':
+            optimizer = torch.optim.Adam([
+                {'params': bias_params, 'weight_decay': 0.0},
+                {'params': weight_params, 'weight_decay': 4e-4},
+                {'params': alpha_params, 'lr': lr * 0.01, 'weight_decay': 0.0} # Ensure SNN decay parameters aren't flattened by L2
+            ], lr=lr)
+            
+        elif args.solver == 'sgd':
+            optimizer = torch.optim.SGD([
+                {'params': bias_params, 'weight_decay': 0.0},
+                {'params': weight_params, 'weight_decay': 4e-4},
+                {'params': alpha_params, 'lr': lr * 0.01, 'weight_decay': 0.0}
+            ], lr=lr, momentum=0.9)
 
     # Conditional Scheduler Setup
     if args.warmup_epochs > 0:
