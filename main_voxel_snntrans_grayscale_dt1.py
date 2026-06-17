@@ -128,7 +128,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             event_data = voxel_tensor.to(device)
 
             # --- MIXED PRECISION FORWARD PASS ---
-            with torch.amp.autocast('cuda', enabled=args.mixed_precision):
+            with torch.amp.autocast('cuda', enabled=args.mixed_precision, dtype=torch.bfloat16):
                 # 1. Compute output (SNN + Transformer run in ultra-fast FP16)
                 flow_predictions = model(event_data, image_resize, sp_threshold)
 
