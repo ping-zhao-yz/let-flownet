@@ -65,7 +65,7 @@ parser.add_argument('--test_env', default='indoor_flying1', help='test env (indo
 
 parser.add_argument('--eval_int', type=int, default=3, choices=[3, 1, 1],
                     help='evaluation interval: 3 for training from scratch; 1 for domain bridge; 1 for fine tuning')
-parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 4, 10],
+parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 4, 10, 15, 30],
                     help='maximum failure times: 5 for training from scratch; 4 for domain bridge; 10 for fine tuning')
 parser.add_argument('--warmup_epochs', type=int, default=3, choices=[3, 3, 0],
                     help='warmup epochs for learning rate scheduler: 3 for training from scratch, 3 for domain bridge; 0 for fine tuning')
