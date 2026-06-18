@@ -63,6 +63,8 @@ parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-f
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
 
+parser.add_argument('--lr', type=int, default=1e-5, choices=[1e-5, 1e-6],
+                    help='learning rate')
 parser.add_argument('--eval_int', type=int, default=3, choices=[3, 1, 1],
                     help='evaluation interval: 3 for training from scratch; 1 for domain bridge; 1 for fine tuning')
 parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 4, 10, 15, 30],
@@ -95,7 +97,6 @@ save_dir = 'let_flownet_voxel_dt1_output'
 
 arch = "let_flownet_voxel"
 
-lr = 1e-6
 epochs = 100
 batch_size = 8
 iter_g = 0
@@ -365,7 +366,7 @@ def main():
         args.solver,
         epochs,
         batch_size,
-        lr)
+        args.lr)
 
     timestamp = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M")
     save_path = os.path.join(timestamp, save_path)
@@ -422,15 +423,15 @@ def main():
         optimizer = torch.optim.Adam([
             {'params': bias_params, 'weight_decay': 0.0},
             {'params': weight_params, 'weight_decay': 4e-4},
-            {'params': alpha_params, 'lr': lr * 0.01, 'weight_decay': 0.0} # Ensure SNN decay parameters aren't flattened by L2
-        ], lr=lr)
+            {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0} # Ensure SNN decay parameters aren't flattened by L2
+        ], lr=args.lr)
         
     elif args.solver == 'sgd':
         optimizer = torch.optim.SGD([
             {'params': bias_params, 'weight_decay': 0.0},
             {'params': weight_params, 'weight_decay': 4e-4},
-            {'params': alpha_params, 'lr': lr * 0.01, 'weight_decay': 0.0}
-        ], lr=lr, momentum=0.9)
+            {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0}
+        ], lr=args.lr, momentum=0.9)
 
     # Conditional Scheduler Setup
     if args.warmup_epochs > 0:
