@@ -10,6 +10,7 @@ import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim
 import torchvision.transforms as transforms
+import warnings
 
 from datetime import datetime
 from tensorboardX import SummaryWriter
@@ -456,9 +457,11 @@ def main():
     else:
         # TRUE 0-Warmup: Immediately start at base LR and only apply multistep decay
 
-        # ---> Tell PyTorch the base LR so it can safely fast-forward <---
-        for group in optimizer.param_groups:
-            group.setdefault('initial_lr', group['lr'])
+        # ---> Physically fast-forward the scheduler to sync the optimizer's internal LRs <---
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # Suppress harmless PyTorch 'step before optimizer' warning
+            for _ in range(args.start_epoch):
+                scheduler.step()
 
         scheduler = torch.optim.lr_scheduler.MultiStepLR(
             optimizer, milestones=[15, 30, 45, 60, 80], gamma=0.5, last_epoch=args.start_epoch - 1
