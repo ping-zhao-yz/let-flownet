@@ -456,16 +456,15 @@ def main():
         )
     else:
         # TRUE 0-Warmup: Immediately start at base LR and only apply multistep decay
-
-        # ---> Physically fast-forward the scheduler to sync the optimizer's internal LRs <---
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer, milestones=[15, 30, 45, 60, 80], gamma=0.5
+        )
+        
+        # ---> FIX: Physically fast-forward the scheduler to sync the optimizer's internal LRs <---
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # Suppress harmless PyTorch 'step before optimizer' warning
             for _ in range(args.start_epoch):
                 scheduler.step()
-
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, milestones=[15, 30, 45, 60, 80], gamma=0.5, last_epoch=args.start_epoch - 1
-        )
 
     # Use strict rigid transformations to preserve SNN spike density and physical scaling
     co_transform = transforms.Compose([
@@ -578,7 +577,7 @@ def main():
                 }, is_best, save_path, filename=filename)
 
             # check if exit criteria is met
-            if EPE < best_EPE:
+            if is_best:
                 val_fail_times = 0
             else:
                 val_fail_times += 1
