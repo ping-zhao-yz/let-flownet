@@ -460,11 +460,11 @@ def main():
             optimizer, milestones=[15, 30, 45, 60, 80], gamma=0.5
         )
         
-        # ---> FIX: Physically fast-forward the scheduler to sync the optimizer's internal LRs <---
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")  # Suppress harmless PyTorch 'step before optimizer' warning
-            for _ in range(args.start_epoch):
-                scheduler.step()
+    # ---> FIX: Physically fast-forward the scheduler to sync the optimizer's internal LRs <---
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # Suppress harmless PyTorch 'step before optimizer' warning
+        for _ in range(args.start_epoch):
+            scheduler.step()
 
     # Use strict rigid transformations to preserve SNN spike density and physical scaling
     co_transform = transforms.Compose([
