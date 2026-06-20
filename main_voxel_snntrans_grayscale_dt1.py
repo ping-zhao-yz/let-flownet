@@ -226,6 +226,11 @@ def validate(test_loader, model, epoch, output_writers):
 
             # compute output
             output = model(event_data, image_resize, sp_threshold)
+
+            # ---> Extract final scale if using Multi-Scale <---
+            if isinstance(output, list):
+                output = output[-1]  # Extract flow3 (the final 256x256 prediction)
+
             output_temp = output.cpu()
 
             # Interpolate natively in PyTorch
