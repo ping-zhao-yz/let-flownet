@@ -456,7 +456,7 @@ def main():
     else:
         # TRUE 0-Warmup: Immediately start at base LR and only apply multistep decay
         scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, milestones=[15, 30, 45, 60, 80], gamma=0.5
+            optimizer, milestones=[15, 30, 45, 60, 80], gamma=0.5, last_epoch=args.start_epoch - 1
         )
 
     # Use strict rigid transformations to preserve SNN spike density and physical scaling
