@@ -72,6 +72,9 @@ parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 4, 10, 
 parser.add_argument('--warmup_epochs', type=int, default=3, choices=[3, 3, 0],
                     help='warmup epochs for learning rate scheduler: 3 for training from scratch, 3 for domain bridge; 0 for fine tuning')
 
+parser.add_argument('--save_thred', type=float, default=1.05,
+                    help='threashold for saving the checkpoint')
+
 args = parser.parse_args()
 
 # Initializations
@@ -572,14 +575,15 @@ def main():
             is_best = EPE < best_EPE
             best_EPE = min(EPE, best_EPE)
 
-            filename = f'checkpoint_epoch_{epoch + 1}_{EPE}.pth.tar'
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': arch,
-                'state_dict': model.module.state_dict(),
-                'best_EPE': best_EPE,
-                'div_flow': div_flow
-            }, is_best, save_path, filename=filename)
+            if EPE < args.save_thred:
+                filename = f'checkpoint_epoch_{epoch + 1}_{EPE}.pth.tar'
+                save_checkpoint({
+                    'epoch': epoch + 1,
+                    'arch': arch,
+                    'state_dict': model.module.state_dict(),
+                    'best_EPE': best_EPE,
+                    'div_flow': div_flow
+                }, is_best, save_path, filename=filename)
 
 
 if __name__ == '__main__':
