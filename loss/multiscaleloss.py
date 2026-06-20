@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import cv2
 
-def smooth_loss_downsample(flow_predictions):
+def smooth_loss(flow_predictions):
     def gradient(pred):
         D_dy = pred[:, :, 1:] - pred[:, :, :-1]
         D_dx = pred[:, :, :, 1:] - pred[:, :, :, :-1]
@@ -25,33 +25,6 @@ def smooth_loss_downsample(flow_predictions):
             + dy2.abs().mean()
         )*weight
         weight /= 2.0
-    return loss
-
-
-def smooth_loss_upsample(flow_predictions):
-    def gradient(pred):
-        D_dy = pred[:, :, 1:] - pred[:, :, :-1]
-        D_dx = pred[:, :, :, 1:] - pred[:, :, :, :-1]
-        return D_dx, D_dy
-
-    if type(flow_predictions) not in [tuple, list]:
-        flow_predictions = [flow_predictions]
-
-    loss = 0
-    weight = 1.0
-
-    for flow in flow_predictions:
-        dx, dy = gradient(flow)
-        dx2, dxdy = gradient(dx)
-        dydx, dy2 = gradient(dy)
-        loss += (
-            dx2.abs().mean() 
-            + dxdy.abs().mean() 
-            + dydx.abs().mean() 
-            + dy2.abs().mean()
-        )*weight
-        weight *= 2.0
-
     return loss
 
 def smooth_loss_single(flow):

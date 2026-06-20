@@ -20,8 +20,8 @@ from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
 from datasets.voxel.dataset_dtx import DatasetTest, DatasetTrain
 from models import let_flownet_voxel
-from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss_single
-from loss.photometric_loss_backward import photometric_loss_backward
+from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss
+from loss.photometric_loss_backward import photometric_loss_multiscale
 
 parser = argparse.ArgumentParser(description='let_flownet_voxel training on several datasets',
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -110,7 +110,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     # switch to train mode
     model.train()
 
-    multiscale_weights = [1, 1, 1, 1]
+    multiscale_weights = [0.01, 0.02, 0.08, 1.0]
     print_freq = 100
     valid_batches = 0
 
@@ -136,11 +136,11 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             # --- FORCE LOSS CALCULATION TO FP32 ---
             # 2. Step OUTSIDE the autocast block and explicitly cast to float32.
             # This prevents grid_sample and division underflow NaNs in the loss!
-            flow_preds_fp32 = flow_predictions.float()
+            flow_preds_fp32 = [f.float() for f in flow_predictions]
             
             event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
             
-            photometric_loss = photometric_loss_backward(
+            photometric_loss = photometric_loss_multiscale(
                 former_gray[:, 0, :, :].to(device).float(), 
                 latter_gray[:, 0, :, :].to(device).float(), 
                 event_mask, 
@@ -151,7 +151,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             )
 
             # Smoothness loss
-            smoothness_loss = smooth_loss_single(flow_preds_fp32)
+            smoothness_loss = smooth_loss(flow_preds_fp32)
 
             # total_loss
             loss = photometric_loss + smoothness_loss

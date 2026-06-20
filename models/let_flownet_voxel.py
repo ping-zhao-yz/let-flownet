@@ -243,7 +243,7 @@ class Let_Flownet_Voxel(BaseModel):
         input3 = self.UpsampleConv[3](concat3)
         flow3 = self.predict_flow[3](input3)
 
-        return flow3
+        return [flow0, flow1, flow2, flow3]
 
     def weight_parameters(self):
         return [param for name, param in self.named_parameters() if 'weight' in name]

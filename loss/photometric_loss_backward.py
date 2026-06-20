@@ -50,7 +50,7 @@ def backward_warp(x, flo):
 """
 Multi-scale photometric loss, as defined in equation (3) of the paper.
 """
-def photometric_loss_backward_multiscale(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
+def photometric_loss_multiscale(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
     #1. Expand dimensions from [Batch, H, W] to [Batch, 1, H, W] 
     prev_images_base = prev_images_temp.unsqueeze(1)
     next_images_base = next_images_temp.unsqueeze(1)
@@ -99,7 +99,7 @@ def photometric_loss_backward_multiscale(prev_images_temp, next_images_temp, eve
         photometric_loss_scale = charbonnier_loss(error_temp_backward, mask=valid_mask)
 
         if print_details:
-            print(f'photometric_loss_backward (scale {i}): {photometric_loss_scale.item()}')
+            print(f'photometric_loss (scale {i}): {photometric_loss_scale.item()}')
 
         # Apply corresponding weight for the current scale
         total_photometric_loss += weights[len(weights) - i - 1] * photometric_loss_scale
@@ -115,7 +115,7 @@ def photometric_loss_backward_multiscale(prev_images_temp, next_images_temp, eve
 """
 Single-scale photometric loss, as defined in equation (3) of the paper.
 """
-def photometric_loss_backward(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
+def photometric_loss_single(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
     flow = output
 
     height = flow.size(2)
