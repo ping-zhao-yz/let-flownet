@@ -51,7 +51,7 @@ def backward_warp(x, flo):
 Multi-scale photometric loss, as defined in equation (3) of the paper.
 """
 def photometric_loss_multiscale(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
-    #1. Expand dimensions from [Batch, H, W] to [Batch, 1, H, W] 
+    # 1. Expand dimensions from [Batch, H, W] to [Batch, 1, H, W] 
     prev_images_base = prev_images_temp.unsqueeze(1)
     next_images_base = next_images_temp.unsqueeze(1)
     
@@ -59,16 +59,15 @@ def photometric_loss_multiscale(prev_images_temp, next_images_temp, event_images
     event_mask_base = event_images.unsqueeze(1).float()
 
     total_photometric_loss = 0.0
-    loss_weight_sum = 0.0
 
-    # Iterate through the multi-scale flow predictions
+    # Iterate through the multi-scale flow predictions [flow0, flow1, flow2, flow3]
     for i in range(len(output)):
         flow = output[i]
         
         height = flow.size(2)
         width = flow.size(3)
 
-        #2. Resize images and mask directly on the GPU for the current scale
+        # 2. Resize images and mask directly on the GPU for the current scale
         prev_images_scaled = nn.functional.interpolate(
             prev_images_base, size=(height, width), mode='bilinear', align_corners=False
         )
@@ -91,26 +90,32 @@ def photometric_loss_multiscale(prev_images_temp, next_images_temp, event_images
         valid_mask[:, :, :, :margin_x] = 0
         valid_mask[:, :, :, -margin_x:] = 0
 
-        #3. Calculate Loss
+        # 3. Calculate Loss
         next_images_warped = backward_warp(next_images_scaled, flow)
         error_temp_backward = next_images_warped - prev_images_scaled
         
-        # Pass the mask to charbonnier to ignore blank regions
+        # Pass the mask to charbonnier to ignore blank regions (Returns a sum)
         photometric_loss_scale = charbonnier_loss(error_temp_backward, mask=valid_mask)
 
         if print_details:
             print(f'photometric_loss (scale {i}): {photometric_loss_scale.item()}')
 
-        # Apply corresponding weight for the current scale
-        total_photometric_loss += weights[len(weights) - i - 1] * photometric_loss_scale
-        loss_weight_sum += 1.0
-
-    total_photometric_loss = total_photometric_loss / loss_weight_sum
+        # ---> CRITICAL MULTI-SCALE FIXES <---
+        # A. Use standard forward indexing (flow0 gets weights[0])
+        current_weight = weights[i]
+        
+        # B. Compensate for the torch.sum() pixel drop-off by normalizing to the 256x256 base size.
+        #    flow3 multiplier = 1. flow0 multiplier = 64. 
+        pixel_scale_multiplier = (256 * 256) / (height * width)
+        
+        # C. Accumulate the corrected loss (No division by 4 at the end)
+        total_photometric_loss += current_weight * (photometric_loss_scale * pixel_scale_multiplier)
 
     if print_details:
         print('total_photometric_loss: {0}'.format(total_photometric_loss.item()))
 
     return total_photometric_loss
+
 
 """
 Single-scale photometric loss, as defined in equation (3) of the paper.
