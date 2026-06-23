@@ -161,7 +161,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             loss = photometric_loss + smoothness_loss
 
             optimizer.zero_grad()
-            
+
             # --- MIXED PRECISION BACKWARD PASS ---
             # The scaler will compute the loss gradients in safe FP32, and automatically 
             # cast them back to FP16 when they flow backwards into the network layers.
@@ -419,6 +419,7 @@ def main():
     print(f'=> setting {args.solver} solver')
 
     # 1. Safely extract PLIF decay parameters via .module
+    # (Ensures the SNN temporal memory parameters are isolated)
     alpha_params = [
         model.module.alpha1, model.module.alpha2, model.module.alpha3, model.module.alpha4
     ]
@@ -432,6 +433,7 @@ def main():
         optimizer = torch.optim.Adam([
             {'params': bias_params, 'weight_decay': 0.0},
             {'params': weight_params, 'weight_decay': 4e-4},
+            # ---> CRITICAL: 100x smaller LR, Zero Weight Decay for SNN <---
             {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0} # Ensure SNN decay parameters aren't flattened by L2
         ], lr=args.lr)
         

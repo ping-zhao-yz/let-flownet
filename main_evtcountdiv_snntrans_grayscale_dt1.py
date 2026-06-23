@@ -9,17 +9,18 @@ import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim
 import torchvision.transforms as transforms
+import warnings
+
 from datetime import datetime
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from util.loss_util import AverageMeter
 from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
-from datasets.evt_count_divided.dataset_dt1 import DatasetTest, DatasetTrain
+from datasets.evt_count_divided.dataset_dtx import DatasetTest, DatasetTrain
 from models import let_flownet_evtcount
-from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss_single
-from loss.photometric_loss_backward import photometric_loss_single
-
+from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss
+from loss.photometric_loss_backward import photometric_loss_multiscale
 
 parser = argparse.ArgumentParser(description='let_flownet_evtcount training on several datasets',
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -44,8 +45,9 @@ parser.add_argument('--tau', default=20*1e-3, help='time constant for Leaky Inte
 parser.add_argument('--num_enc_layers', default=2, help='number of transformer encoder layers')
 parser.add_argument('--num_dec_layers', default=2, help='number of transformer decoder layers')
 
-parser.add_argument('--mixed_precision', action='store_true',
-                    help='use mixed precision')
+parser.add_argument('--no_mixed_precision', dest='mixed_precision', action='store_false',
+                    help='disable mixed precision (default is ON)')
+parser.set_defaults(mixed_precision=True)
 
 parser.add_argument('--dropout', type=float, default=0.0)
 
@@ -55,6 +57,18 @@ parser.add_argument('--sp_threshold', type=float, default=0.75, help='spike thre
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
 
+parser.add_argument('--lr', type=float, default=1e-5, choices=[1e-4, 1e-5, 1e-6],
+                    help='learning rate: 1e-4 for training from scratch, 1e-5/1e-6 for fine-tuning, both with 3 epochs warmup')
+parser.add_argument('--eval_int', type=int, default=3, choices=[3, 1, 1],
+                    help='evaluation interval: 3 for training from scratch; 1 for domain bridge; 1 for fine tuning')
+parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 4, 10, 15, 30],
+                    help='maximum failure times: 5 for training from scratch; 4 for domain bridge; 10 for fine tuning')
+parser.add_argument('--warmup_epochs', type=int, default=3, choices=[3, 3, 0],
+                    help='warmup epochs for learning rate scheduler: 3 for training from scratch, 3 for domain bridge; 0 for fine tuning')
+
+parser.add_argument('--save_thred', type=float, default=1.05,
+                    help='threashold for saving the checkpoint')
+
 args = parser.parse_args()
 
 # Initializations
@@ -63,15 +77,12 @@ print(f"=> using device '{device}'")
 
 image_resize = 256
 sp_threshold = args.sp_threshold
-
 div_flow = 1
 
 # dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
 # src_file_dir = '../../../dataset/Event/mvsec/original'
 dataset_dir = '/media/windows_data/code/research/dataset/Event/mvsec/preprocessed'
 src_file_dir = '/media/windows_data/code/research/dataset/Event/mvsec/original'
-
-save_dir = 'let_flownet_evtcount_dt1_output'
 
 train_env = args.train_env
 test_env = args.test_env
@@ -83,15 +94,16 @@ train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
 test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
 test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
+save_dir = '/media/windows_data/code/research/outputs/let_flownet_evtcount_dt1_output'
+
 arch = "let_flownet_evtcount"
 
-lr = 1e-4
 epochs = 100
 batch_size = 8
 iter_g = 0
 
 
-def train(train_loader, model, optimizer, epoch, train_writer):
+def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     global iter_g, args, image_resize, sp_threshold
     np.set_printoptions(precision=2)
     losses = AverageMeter()
@@ -99,35 +111,63 @@ def train(train_loader, model, optimizer, epoch, train_writer):
     # switch to train mode
     model.train()
 
-    multiscale_weights = [1, 1, 1, 1]
+    multiscale_weights = [0.01, 0.02, 0.08, 1.0]
     print_freq = 100
+    valid_batches = 0
 
     for i_batch, data in enumerate(train_loader, 0):
         # get the inputs
         former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off, former_gray, latter_gray = data
 
         if torch.sum(former_inputs_on + former_inputs_off) > 0:
-            print_details = i_batch % print_freq == 0
+            print_details = valid_batches % print_freq == 0
 
             event_data = initInputRepresentation(
                 former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off)
 
-            # compute output
-            flow_predictions = model(event_data, image_resize, sp_threshold)
+            # --- MIXED PRECISION FORWARD PASS ---
+            with torch.amp.autocast('cuda', enabled=args.mixed_precision, dtype=torch.bfloat16):
+                # 1. Compute output (SNN + Transformer run in ultra-fast FP16)
+                flow_predictions = model(event_data, image_resize, sp_threshold)
 
-            # Photometric loss
-            photometric_loss = photometric_loss_single(former_gray[:, 0, :, :], latter_gray[:, 0, :, :], torch.sum(
-                event_data, 4), flow_predictions, device, print_details, weights=multiscale_weights)
+            # --- FORCE LOSS CALCULATION TO FP32 ---
+            # 2. Step OUTSIDE the autocast block and explicitly cast to float32.
+            # This prevents grid_sample and division underflow NaNs in the loss!
+            flow_preds_fp32 = [f.float() for f in flow_predictions]
+            
+            # ---> It is a 5D tensor, so we must collapse dims 1 (Channels) and 4 (Bins) <---
+            event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
+
+            photometric_loss = photometric_loss_multiscale(
+                former_gray[:, 0, :, :].to(device).float(), 
+                latter_gray[:, 0, :, :].to(device).float(), 
+                event_mask, 
+                flow_preds_fp32, 
+                device, 
+                print_details, 
+                weights=multiscale_weights
+            )
 
             # Smoothness loss
-            smoothness_loss = smooth_loss_single(flow_predictions)
+            smoothness_loss = smooth_loss(flow_preds_fp32)
 
             # total_loss
             loss = photometric_loss + smoothness_loss
 
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+
+            # --- MIXED PRECISION BACKWARD PASS ---
+            # The scaler will compute the loss gradients in safe FP32, and automatically 
+            # cast them back to FP16 when they flow backwards into the network layers.
+            scaler.scale(loss).backward()
+
+            # Unscale the gradients BEFORE clipping to ensure the max_norm threshold is accurate
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+            # Step optimizer and update scaler
+            scaler.step(optimizer)
+            scaler.update()
 
             # record loss and EPE
             train_writer.add_scalar('train_loss', loss.item(), iter_g)
@@ -139,6 +179,7 @@ def train(train_loader, model, optimizer, epoch, train_writer):
                 print('-------------------------------------------------------')
 
             iter_g += 1
+            valid_batches += 1
 
     return losses.avg
 
@@ -180,6 +221,11 @@ def validate(test_loader, model, epoch, output_writers):
 
             # compute output
             output = model(event_data, image_resize, sp_threshold)
+
+            # ---> Extract final scale if using Multi-Scale <---
+            if isinstance(output, list):
+                output = output[-1]
+
             output_temp = output.cpu()
 
             # Calculate the scaling factors
@@ -343,7 +389,7 @@ def main():
         args.solver,
         epochs,
         batch_size,
-        lr)
+        args.lr)
 
     timestamp = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M")
     save_path = os.path.join(timestamp, save_path)
@@ -358,8 +404,8 @@ def main():
         output_writers.append(SummaryWriter(
             os.path.join(save_path, 'test', str(i))))
 
-    Test_dataset = DatasetTest(test_src_file, test_dir, gt_start_time=gt_start)
-    test_loader = DataLoader(dataset=Test_dataset,
+    test_dataset = DatasetTest(test_src_file, test_dir, gt_start_time=gt_start)
+    test_loader = DataLoader(dataset=test_dataset,
                              batch_size=1,
                              shuffle=False,
                              num_workers=workers)
@@ -375,6 +421,7 @@ def main():
 
     model = let_flownet_evtcount.__dict__[arch](args, device, network_data).to(device)
     model = torch.nn.DataParallel(model).to(device)
+
     cudnn.benchmark = True
 
     if args.evaluate:
@@ -384,26 +431,56 @@ def main():
 
     assert (args.solver in ['adam', 'sgd'])
     print(f'=> setting {args.solver} solver')
-    param_groups = [{'params': model.module.bias_parameters(), 'weight_decay': 0},
-                    {'params': model.module.weight_parameters(), 'weight_decay': 4e-4}]
-    if args.solver == 'adam':
-        optimizer = torch.optim.Adam(
-            param_groups, lr, betas=(0.9, 0.999))
-    elif args.solver == 'sgd':
-        optimizer = torch.optim.SGD(
-            param_groups, lr, momentum=0.9)
 
-    # Warmup for first 3 epochs, then multistep decay
-    warmup_epochs = 3
-    scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs
-    )
-    scheduler_multistep = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer, milestones=[5, 10, 20, 30, 40, 50, 70, 90], gamma=0.7
-    )
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer, schedulers=[scheduler_warmup, scheduler_multistep], milestones=[warmup_epochs]
-    )
+    # 1. Safely extract PLIF decay parameters via .module
+    # (Ensures the SNN temporal memory parameters are isolated)
+    alpha_params = [
+        model.module.alpha1, model.module.alpha2, model.module.alpha3, model.module.alpha4
+    ]
+    alpha_param_ids = list(map(id, alpha_params))
+
+    # 2. Extract and filter bias/weight parameters to EXCLUDE the alpha params
+    bias_params = [p for p in model.module.bias_parameters() if id(p) not in alpha_param_ids]
+    weight_params = [p for p in model.module.weight_parameters() if id(p) not in alpha_param_ids]
+
+    if args.solver == 'adam':
+        optimizer = torch.optim.Adam([
+            {'params': bias_params, 'weight_decay': 0.0},
+            {'params': weight_params, 'weight_decay': 4e-4},
+            # ---> CRITICAL: 100x smaller LR, Zero Weight Decay for SNN <---
+            {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0} # Ensure SNN decay parameters aren't flattened by L2
+        ], lr=args.lr)
+        
+    elif args.solver == 'sgd':
+        optimizer = torch.optim.SGD([
+            {'params': bias_params, 'weight_decay': 0.0},
+            {'params': weight_params, 'weight_decay': 4e-4},
+            {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0}
+        ], lr=args.lr, momentum=0.9)
+
+    # Conditional Scheduler Setup
+    if args.warmup_epochs > 0:
+        # Warmup for first n epochs, then multistep decay
+        scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=0.01, end_factor=1.0, total_iters=args.warmup_epochs
+        )
+        scheduler_multistep = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer, milestones=[5, 10, 20, 30, 40, 50, 70, 90], gamma=0.7
+        )
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer, schedulers=[scheduler_warmup, scheduler_multistep], milestones=[args.warmup_epochs]
+        )
+    else:
+        # TRUE 0-Warmup: Immediately start at base LR and only apply multistep decay
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer, milestones=[5, 10, 20, 30, 40, 50, 70, 90], gamma=0.7
+        )
+        
+    # ---> FIX: Physically fast-forward the scheduler to sync the optimizer's internal LRs <---
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # Suppress harmless PyTorch 'step before optimizer' warning
+        for _ in range(args.start_epoch):
+            scheduler.step()
 
     co_transform = transforms.Compose([
         transforms.ToPILImage(),
@@ -415,25 +492,38 @@ def main():
         transforms.ToTensor(),
     ])
 
-    Train_dataset = DatasetTrain(
-        train_src_file, train_dir, transform=co_transform)
-    train_loader = DataLoader(dataset=Train_dataset,
-                              batch_size=batch_size,
-                              shuffle=True,
-                              num_workers=workers)
+    train_dataset = DatasetTrain(
+        args.dt,
+        train_src_file,
+        train_dir,
+        transform=co_transform,
+        is_fine_tune=args.train_env=='outdoor_day2'
+    )
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=workers
+    )
+
+    # Initialize Mixed Precision Scaler
+    scaler = torch.amp.GradScaler('cuda', enabled=args.mixed_precision)
 
     for epoch in range(args.start_epoch, epochs):
 
         current_lr = optimizer.param_groups[0]['lr']
         print(f"Learning Rate: {current_lr:.6f}")
 
-        train_loss = train(train_loader, model, optimizer, epoch, train_writer)
+        train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler)
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
+
+        print(f"Mean Training Loss: {train_loss:.3f} of epoch {epoch}")
+        print('-------------------------------------------------------')
 
         scheduler.step()
 
-        # Test at every 5 epoch during training
-        if (epoch + 1) % evaluate_interval == 0:
+        # Test at every n epoch during training
+        if (epoch + 1) % args.eval_int == 0:
             # evaluate on validation set
             with torch.no_grad():
                 EPE = validate(test_loader, model, epoch, output_writers)
@@ -442,31 +532,32 @@ def main():
             if best_EPE < 0:
                 best_EPE = EPE
 
+            is_best = EPE < best_EPE
+            best_EPE = min(EPE, best_EPE)
+
+            if EPE < args.save_thred:
+                filename = f'checkpoint_epoch_{epoch + 1}_{EPE}.pth.tar'
+                save_checkpoint({
+                    'epoch': epoch + 1,
+                    'arch': arch,
+                    'state_dict': model.module.state_dict(),
+                    'best_EPE': best_EPE,
+                    'div_flow': div_flow
+                }, is_best, save_path, filename=filename)
+
             # check if exit criteria is met
-            if EPE < best_EPE:
+            if is_best:
                 val_fail_times = 0
             else:
                 val_fail_times += 1
 
-            if val_fail_times >= val_fail_times_max:
+            if val_fail_times >= args.max_fail_times:
                 print(
                     "Epoch {}: validation failed for consective {} times".format(
                         epoch, val_fail_times
                     )
                 )
                 break
-
-            is_best = EPE < best_EPE
-            best_EPE = min(EPE, best_EPE)
-
-            filename = f'checkpoint_epoch_{epoch + 1}_{EPE}.pth.tar'
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': arch,
-                'state_dict': model.module.state_dict(),
-                'best_EPE': best_EPE,
-                'div_flow': div_flow
-            }, is_best, save_path, filename=filename)
 
 
 if __name__ == '__main__':

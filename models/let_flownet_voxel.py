@@ -190,7 +190,7 @@ class Let_Flownet_Voxel(BaseModel):
         :return: N x num_output_channels x H x W
         """
 
-        #************* path to transformer\
+        #************* path to transformer
         H = W = image_resize
 
         # Small -> Big

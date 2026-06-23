@@ -45,8 +45,19 @@ class Let_Flownet_EvtCount(BaseModel):
                 if m.bias is not None:
                     constant_(m.bias, 0)
 
-        time_step = (dt * 10 * 1e-3) / input.size(4)
-        self.alpha = np.exp(-time_step/self.args.tau)
+        # (dt * 10 * 1e-3) / (5 * dt) perfectly simplifies to a constant 2 milliseconds per bin
+        time_step = 2e-3
+
+        # Initialize separate learnable alpha parameters for each channel depth
+        # Calculate target decay
+        target_alpha = np.exp(-time_step / self.args.tau)
+        # Convert to logit for the sigmoid in the forward pass
+        init_logit = math.log(target_alpha / (1.0 - target_alpha))
+
+        self.alpha1 = torch.nn.Parameter(torch.full((1, 64, 1, 1), init_logit, dtype=torch.float32))
+        self.alpha2 = torch.nn.Parameter(torch.full((1, 128, 1, 1), init_logit, dtype=torch.float32))
+        self.alpha3 = torch.nn.Parameter(torch.full((1, 256, 1, 1), init_logit, dtype=torch.float32))
+        self.alpha4 = torch.nn.Parameter(torch.full((1, 512, 1, 1), init_logit, dtype=torch.float32))
 
         # Transformers
         norm = self.args.norm
@@ -108,12 +119,22 @@ class Let_Flownet_EvtCount(BaseModel):
             predict_flow(self.batchNorm, 128, 2)
         ])
 
+        # ---> NEW: True 2-Channel Flow Projectors for Multi-Scale Loss <---
+        self.flow_projectors = nn.ModuleList([
+            nn.Conv2d(128, 2, kernel_size=3, padding=1),
+            nn.Conv2d(64, 2, kernel_size=3, padding=1),
+            nn.Conv2d(64, 2, kernel_size=3, padding=1)
+        ])
+        
+        # Initialize with near-zero weights to prevent chaotic warping in Epoch 0
+        for m in self.flow_projectors:
+            nn.init.normal_(m.weight, 0, 0.0001)
+            nn.init.constant_(m.bias, 0)
 
     def forward(self, input, image_resize, sp_threshold):
 
         # Encoder-SNN: temporal feature extraction
         threshold = sp_threshold
-        alpha = self.alpha
 
         mem_1 = torch.zeros(input.size(0), 64, int(
             image_resize/2), int(image_resize/2)).to(input.device)
@@ -137,22 +158,22 @@ class Let_Flownet_EvtCount(BaseModel):
             input11 = input[:, :, :, :, i].to(input.device)
 
             current_1 = self.conv_s1(input11)
-            mem_1 = alpha*mem_1 + current_1
+            mem_1 = torch.sigmoid(self.alpha1) * mem_1 + current_1
             mem_1, spike_1 = LIF_Neuron(mem_1, threshold)
             mem_1_total = mem_1_total + current_1
 
             current_2 = self.conv_s2(spike_1)
-            mem_2 = alpha*mem_2 + current_2
+            mem_2 = torch.sigmoid(self.alpha2) * mem_2 + current_2
             mem_2, spike_2 = LIF_Neuron(mem_2, threshold)
             mem_2_total = mem_2_total + current_2
 
             current_3 = self.conv_s3(spike_2)
-            mem_3 = alpha*mem_3 + current_3
+            mem_3 = torch.sigmoid(self.alpha3) * mem_3 + current_3
             mem_3, spike_3 = LIF_Neuron(mem_3, threshold)
             mem_3_total = mem_3_total + current_3
 
             current_4 = self.conv_s4(spike_3)
-            mem_4 = alpha*mem_4 + current_4
+            mem_4 = torch.sigmoid(self.alpha4) * mem_4 + current_4
             mem_4, spike_4 = LIF_Neuron(mem_4, threshold)
             mem_4_total = mem_4_total + current_4
 
@@ -210,30 +231,34 @@ class Let_Flownet_EvtCount(BaseModel):
         # Small -> Big
         # Start with the smallest scale transformer output
         input0 = self.UpsampleConv[0](hc0_img)
-        flow0 = self.predict_flow[0](input0)
+        flow0_feat = self.predict_flow[0](input0)               # 128 channels
+        true_flow0 = self.flow_projectors[0](flow0_feat)        # 2 channels (for loss)
         hs_up = self.deconv[0](hc0_img)
 
         # Upsample and inject next scale transformer output
         hc1_up = F.interpolate(hc1_img, scale_factor=2, mode='bilinear', align_corners=False)
-        concat1 = torch.cat((flow0, blocks[2], hs_up, hc1_up), 1)
+        concat1 = torch.cat((flow0_feat, blocks[2], hs_up, hc1_up), 1)
         input1 = self.UpsampleConv[1](concat1)
-        flow1 = self.predict_flow[1](input1)
+        flow1_feat = self.predict_flow[1](input1)               # 64 channels
+        true_flow1 = self.flow_projectors[1](flow1_feat)        # 2 channels (for loss)
         concat1_up = self.deconv[1](concat1)
 
         # Upsample and inject next scale transformer output
         hc2_up = F.interpolate(hc2_img, scale_factor=4, mode='bilinear', align_corners=False)
-        concat2 = torch.cat((flow1, blocks[1], concat1_up, hc2_up), 1)
+        concat2 = torch.cat((flow1_feat, blocks[1], concat1_up, hc2_up), 1)
         input2 = self.UpsampleConv[2](concat2)
-        flow2 = self.predict_flow[2](input2)
+        flow2_feat = self.predict_flow[2](input2)               # 64 channels
+        true_flow2 = self.flow_projectors[2](flow2_feat)        # 2 channels (for loss)
         concat2_up = self.deconv[2](concat2)
 
         # Upsample and inject final scale transformer output
         hc3_up = F.interpolate(hc3_img, scale_factor=8, mode='bilinear', align_corners=False)
-        concat3 = torch.cat((flow2, blocks[0], concat2_up, hc3_up), 1)
+        concat3 = torch.cat((flow2_feat, blocks[0], concat2_up, hc3_up), 1)
         input3 = self.UpsampleConv[3](concat3)
-        flow3 = self.predict_flow[3](input3)
+        flow3 = self.predict_flow[3](input3)                    # Already 2 channels
 
-        return flow3
+        # Return the actual 2-channel optical flows for multi-scale supervision
+        return [true_flow0, true_flow1, true_flow2, flow3]
 
     def weight_parameters(self):
         return [param for name, param in self.named_parameters() if 'weight' in name]
