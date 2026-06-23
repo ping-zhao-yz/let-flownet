@@ -404,7 +404,7 @@ def main():
         output_writers.append(SummaryWriter(
             os.path.join(save_path, 'test', str(i))))
 
-    test_dataset = DatasetTest(test_src_file, test_dir, gt_start_time=gt_start)
+    test_dataset = DatasetTest(1, test_src_file, test_dir, gt_start_time=gt_start)
     test_loader = DataLoader(dataset=test_dataset,
                              batch_size=1,
                              shuffle=False,
