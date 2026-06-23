@@ -482,14 +482,11 @@ def main():
         for _ in range(args.start_epoch):
             scheduler.step()
 
+    # ---> FIX: Pure Tensor transforms (No PIL conversion), identical to the Voxel pipeline
     co_transform = transforms.Compose([
-        transforms.ToPILImage(),
+        transforms.RandomCrop((256, 256)),
         transforms.RandomHorizontalFlip(0.5),
-        transforms.RandomVerticalFlip(0.5),
-        transforms.RandomRotation(30),
-        transforms.RandomResizedCrop((256, 256), scale=(
-            0.5, 1.0), ratio=(0.75, 1.3333333333333333), interpolation=2),
-        transforms.ToTensor(),
+        transforms.RandomVerticalFlip(0.5)
     ])
 
     train_dataset = DatasetTrain(
