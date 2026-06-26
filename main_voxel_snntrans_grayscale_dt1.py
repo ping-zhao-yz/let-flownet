@@ -585,19 +585,12 @@ def main():
                 val_fail_times += 1
 
             if val_fail_times >= args.max_fail_times:
-                if args.train_dataset == 'mvsec':
-                    print(
-                        "Epoch {}: validation failed for consective {} times".format(
-                            epoch, val_fail_times
-                        )
+                print(
+                    "Epoch {}: validation failed for consective {} times".format(
+                        epoch, val_fail_times
                     )
-                    break
-                elif args.train_dataset == 'uzh-fpv':
-                    print(
-                        "Epoch {}: validation failed for consective {} times, still continue as this is pre-training on UZH-FPV dataset".format(
-                            epoch, val_fail_times
-                        )
-                    )
+                )
+                break
 
 
 if __name__ == '__main__':
