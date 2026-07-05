@@ -443,15 +443,15 @@ def main():
     ]
 
     # 3.2. Conditionally add the SNN alpha parameters ONLY during Pretraining
-    if args.train_env != 'outdoor_day2':
-        # ---> CRITICAL: 100x smaller LR, Zero Weight Decay for SNN <---
-        optimizer_params.append(
-            {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0}
-        )
-        print("=> Pretraining Phase: SNN alpha parameters actively optimizing.")
-    else:
-        # ---> FINE-TUNING: SNN alphas are omitted and therefore safely frozen <---
-        print("=> Target Refinement Phase: SNN alpha parameters frozen.")
+    # if args.train_env != 'outdoor_day2':
+    # ---> CRITICAL: 100x smaller LR, Zero Weight Decay for SNN <---
+    optimizer_params.append(
+        {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0}
+    )
+    print("=> Pretraining Phase: SNN alpha parameters actively optimizing.")
+    # else:
+    #     # ---> FINE-TUNING: SNN alphas are omitted and therefore safely frozen <---
+    #     print("=> Target Refinement Phase: SNN alpha parameters frozen.")
 
     # 3.3. Instantiate the selected solver using the dynamic parameter list
     if args.solver == 'adam':
