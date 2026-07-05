@@ -6,10 +6,10 @@ from torch.utils.data import Dataset
 
 
 class DatasetTrain(Dataset):
-    def __init__(self, dt, dataset_file, train_dir, transform=None, is_fine_tune=False):
+    def __init__(self, dt, dataset_file, train_dir, transform=None, train_phase=1):
         self.dt = dt
         self.transform = transform
-        self.is_fine_tune = is_fine_tune
+        self.train_phase = train_phase
 
         self.x = 260
         self.y = 346
@@ -85,7 +85,7 @@ class DatasetTrain(Dataset):
                 ddd = torch.clamp(ddd, max=5.0) / 5.0
 
                 # 5. ALIGNED TEMPORAL REVERSAL: The 4-Way Cross-Swap
-                if (not self.is_fine_tune) and (random.random() > 0.5):
+                if (self.train_phase != 4) and (random.random() > 0.5):
                     # Reverse the order of the temporal bins (dim=0 since shape is [Bins, H, W])
                     temp_aaa = torch.flip(ddd, dims=[0])
                     temp_bbb = torch.flip(ccc, dims=[0])
@@ -131,7 +131,7 @@ class DatasetTrain(Dataset):
                 ddd = torch.clamp(ddd, max=5.0) / 5.0
 
                 # 3. ALIGNED TEMPORAL REVERSAL: The 4-Way Cross-Swap
-                if (not self.is_fine_tune) and (random.random() > 0.5):
+                if (self.train_phase != 4) and (random.random() > 0.5):
                     # Time is the LAST dimension here [H, W, Bins], so we flip on dim=2
                     temp_aaa = torch.flip(ddd, dims=[2])
                     temp_bbb = torch.flip(ccc, dims=[2])
