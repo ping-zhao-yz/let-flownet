@@ -64,14 +64,14 @@ parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-f
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
 
-parser.add_argument('--lr', type=float, default=1e-4, choices=[1e-4, 1e-5, 1e-6],
-                    help='learning rate: 1e-4 for training from scratch, 1e-5 for domain bridge; 1e-6 for fine tuning')
-parser.add_argument('--warmup_epochs', type=int, default=3, choices=[3, 3, 0],
-                    help='warmup epochs for learning rate scheduler: 3 for training from scratch or domain bridge; 0 for fine tuning')
+parser.add_argument('--lr', type=float, default=1e-5, choices=[1e-4, 1e-5, 1e-6],
+                    help='learning rate: 1e-4 for training from scratch, 1e-5/1e-6 for fine-tuning, both with 3 epochs warmup')
 parser.add_argument('--eval_int', type=int, default=3, choices=[3, 1, 1],
-                    help='evaluation interval: 3 for training from scratch, 1 for domain bridge or fine tuning')
-parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 5, 10],
-                    help='maximum failure times: 5 for training from scratch or domain bridge; 10 for fine tuning')
+                    help='evaluation interval: 3 for training from scratch; 1 for domain bridge; 1 for fine tuning')
+parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 4, 10, 15, 30],
+                    help='maximum failure times: 5 for training from scratch; 4 for domain bridge; 10 for fine tuning')
+parser.add_argument('--warmup_epochs', type=int, default=3, choices=[3, 3, 0],
+                    help='warmup epochs for learning rate scheduler: 3 for training from scratch, 3 for domain bridge; 0 for fine tuning')
 
 parser.add_argument('--save_thred', type=float, default=1.05,
                     help='threashold for saving the checkpoint')
@@ -114,13 +114,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     # switch to train mode
     model.train()
 
-    if args.train_env == 'outdoor_day2':
-        # Target Refinement: Optimize ONLY the highest resolution flow
-        multiscale_weights = [0.0, 0.0, 0.0, 1.0] 
-    else:
-        # Pretraining: Use the structural anchors
-        multiscale_weights = [0.01, 0.02, 0.08, 1.0]
-
+    multiscale_weights = [0.01, 0.02, 0.08, 1.0]
     print_freq = 100
     valid_batches = 0
 
@@ -435,30 +429,20 @@ def main():
     bias_params = [p for p in model.module.bias_parameters() if id(p) not in alpha_param_ids]
     weight_params = [p for p in model.module.weight_parameters() if id(p) not in alpha_param_ids]
 
-    # 3. Optimizer logic
-    # 3.1. Define the core spatial parameters that ALWAYS update (Convolutions & Transformers)
-    optimizer_params = [
-        {'params': bias_params, 'weight_decay': 0.0},
-        {'params': weight_params, 'weight_decay': 4e-4}
-    ]
-
-    # 3.2. Conditionally add the SNN alpha parameters ONLY during Pretraining
-    if args.train_env != 'outdoor_day2':
-        # ---> CRITICAL: 100x smaller LR, Zero Weight Decay for SNN <---
-        optimizer_params.append(
-            {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0}
-        )
-        print("=> Pretraining Phase: SNN alpha parameters actively optimizing.")
-    else:
-        # ---> FINE-TUNING: SNN alphas are omitted and therefore safely frozen <---
-        print("=> Target Refinement Phase: SNN alpha parameters frozen.")
-
-    # 3.3. Instantiate the selected solver using the dynamic parameter list
     if args.solver == 'adam':
-        optimizer = torch.optim.Adam(optimizer_params, lr=args.lr)
+        optimizer = torch.optim.Adam([
+            {'params': bias_params, 'weight_decay': 0.0},
+            {'params': weight_params, 'weight_decay': 4e-4},
+            # ---> CRITICAL: 100x smaller LR, Zero Weight Decay for SNN <---
+            {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0} # Ensure SNN decay parameters aren't flattened by L2
+        ], lr=args.lr)
         
     elif args.solver == 'sgd':
-        optimizer = torch.optim.SGD(optimizer_params, lr=args.lr, momentum=0.9)
+        optimizer = torch.optim.SGD([
+            {'params': bias_params, 'weight_decay': 0.0},
+            {'params': weight_params, 'weight_decay': 4e-4},
+            {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0}
+        ], lr=args.lr, momentum=0.9)
 
     # Conditional Scheduler Setup
     if args.warmup_epochs > 0:
