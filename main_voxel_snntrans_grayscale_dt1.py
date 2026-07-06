@@ -64,24 +64,17 @@ parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-f
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
 
-# Phase 1: UZH-FPV
-# Phase 2: Domain Bridge (Day1)
-# Phase 3: Texture Adaptation (Day2 - FT1) (SNN Frozen, Multi-Scale Active, Reversal Active)
-# Phase 4: Absolute Minimum (Day2 - FT2) (Everything Frozen except top-scale spatial weights)
-parser.add_argument('--lr', type=float, default=1e-4, choices=[1e-4, 1e-5, 5e-6, 1e-6],
-                    help='learning rate: 1e-4 for training from scratch, 1e-5 for domain bridge; 5e-6 for FT1; 1e-6 for ft2')
-parser.add_argument('--warmup_epochs', type=int, default=3, choices=[3, 3, 1, 0],
-                    help='warmup epochs for learning rate scheduler: 3 for training from scratch; 1 for FT1; 0 for ft2')
-parser.add_argument('--eval_int', type=int, default=3, choices=[3, 1, 1, 1],
-                    help='evaluation interval: 3 for training from scratch, 1 for domain bridge, FT1 and FT2')
-parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 5, 5, 10],
-                    help='maximum failure times: 5 for training from scratch, domain bridge, and FT1; 10 for ft2')
+parser.add_argument('--lr', type=float, default=1e-4, choices=[1e-4, 1e-5, 1e-6],
+                    help='learning rate: 1e-4 for training from scratch, 1e-5 for domain bridge; 1e-6 for fine tuning')
+parser.add_argument('--warmup_epochs', type=int, default=3, choices=[3, 3, 0],
+                    help='warmup epochs for learning rate scheduler: 3 for training from scratch or domain bridge; 0 for fine tuning')
+parser.add_argument('--eval_int', type=int, default=3, choices=[3, 1, 1],
+                    help='evaluation interval: 3 for training from scratch, 1 for domain bridge or fine tuning')
+parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 5, 10],
+                    help='maximum failure times: 5 for training from scratch or domain bridge; 10 for fine tuning')
 
 parser.add_argument('--save_thred', type=float, default=1.05,
                     help='threashold for saving the checkpoint')
-
-parser.add_argument('--train_phase', type=int, default=1, choices=[1, 2, 3, 4],
-                    help='1: Pre-train (All active) | 2: Domain Bridge (All active) | 3: FT1 (SNN frozen) | 4: FT2 (SNN/Multi-scale/Reversal frozen)')
 
 args = parser.parse_args()
 
@@ -121,10 +114,11 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     # switch to train mode
     model.train()
 
-    # Phase 4 disables the multi-scale anchors for micro-refinement
-    if args.train_phase == 4:
+    if args.train_env == 'outdoor_day2':
+        # Target Refinement: Optimize ONLY the highest resolution flow
         multiscale_weights = [0.0, 0.0, 0.0, 1.0] 
     else:
+        # Pretraining: Use the structural anchors
         multiscale_weights = [0.01, 0.02, 0.08, 1.0]
 
     print_freq = 100
@@ -449,15 +443,15 @@ def main():
     ]
 
     # 3.2. Conditionally add the SNN alpha parameters ONLY during Pretraining
-    if args.train_phase <= 2:
-        # ---> CRITICAL: 100x smaller LR, Zero Weight Decay for SNN <---
-        optimizer_params.append(
-            {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0}
-        )
-        print(f"=> Phase {args.train_phase}: SNN alpha parameters actively optimizing.")
-    else:
-        # ---> FINE-TUNING: SNN alphas are omitted and therefore safely frozen <---
-        print(f"=> Phase {args.train_phase} (Fine-Tune): SNN alpha parameters safely FROZEN.")
+    # if args.train_env != 'outdoor_day2':
+    # ---> CRITICAL: 100x smaller LR, Zero Weight Decay for SNN <---
+    optimizer_params.append(
+        {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0}
+    )
+    print("=> Pretraining Phase: SNN alpha parameters actively optimizing.")
+    # else:
+    #     # ---> FINE-TUNING: SNN alphas are omitted and therefore safely frozen <---
+    #     print("=> Target Refinement Phase: SNN alpha parameters frozen.")
 
     # 3.3. Instantiate the selected solver using the dynamic parameter list
     if args.solver == 'adam':
@@ -504,7 +498,7 @@ def main():
             args.dt,
             train_src_file,
             transform=co_transform,
-            train_phase=args.train_phase,
+            is_fine_tune=args.train_env=='outdoor_day2',
             num_bins=args.num_bins
         )
         train_loader = DataLoader(
@@ -533,8 +527,7 @@ def main():
             single_dataset = DatasetTrain(
                 args.dt, 
                 dataset_path, 
-                transform=co_transform,
-                train_phase=args.train_phase,
+                transform=co_transform, 
                 num_bins=args.num_bins
             )
             # Create a separate loader for EACH file
