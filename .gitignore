@@ -56,3 +56,5 @@ Thumbs.db
 *.mov
 *.wmv
 
+# Checkpoint file
+*.tar
