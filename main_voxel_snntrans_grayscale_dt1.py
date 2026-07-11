@@ -401,6 +401,13 @@ def main():
         print(f"=> creating model '{arch}'")
 
     model = let_flownet_voxel.__dict__[arch](args, device, network_data).to(device)
+
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"=======================================================")
+    print(f"=> Architecture: {args.num_enc_layers} Encoder / {args.num_dec_layers} Decoder Layers")
+    print(f"=> Total Trainable Parameters: {total_params / 1e6:.2f} Million")
+    print(f"=======================================================")
+
     model = torch.nn.DataParallel(model).to(device)
 
     cudnn.benchmark = True
