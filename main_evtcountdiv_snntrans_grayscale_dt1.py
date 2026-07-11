@@ -57,17 +57,12 @@ parser.add_argument('--sp_threshold', type=float, default=0.75, help='spike thre
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
 
-parser.add_argument('--lr', type=float, default=1e-5, choices=[1e-4, 1e-5, 1e-6],
-                    help='learning rate: 1e-4 for training from scratch, 1e-5/1e-6 for fine-tuning, both with 3 epochs warmup')
-parser.add_argument('--eval_int', type=int, default=3, choices=[3, 1, 1],
-                    help='evaluation interval: 3 for training from scratch; 1 for domain bridge; 1 for fine tuning')
-parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 4, 10, 15, 30],
-                    help='maximum failure times: 5 for training from scratch; 4 for domain bridge; 10 for fine tuning')
-parser.add_argument('--warmup_epochs', type=int, default=3, choices=[3, 3, 0],
-                    help='warmup epochs for learning rate scheduler: 3 for training from scratch, 3 for domain bridge; 0 for fine tuning')
+parser.add_argument('--lr', type=float, default=1e-5, help='learning rate')
+parser.add_argument('--warmup_epochs', type=int, default=3, help='warmup epochs for learning rate scheduler')
+parser.add_argument('--eval_int', type=int, default=3, help='evaluation interval')
+parser.add_argument('--max_fail_times', type=int, default=5, help='maximum failure times')
 
-parser.add_argument('--save_thred', type=float, default=1.05,
-                    help='threashold for saving the checkpoint')
+parser.add_argument('--save_thred', type=float, default=1.05, help='threashold for saving the checkpoint')
 
 args = parser.parse_args()
 
