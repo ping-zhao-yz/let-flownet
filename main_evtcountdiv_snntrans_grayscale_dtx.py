@@ -40,7 +40,8 @@ parser.add_argument('--norm', default='BN',
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 
-parser.add_argument('--tau', default=50e-3, help='time constant for Leaky Integrate and Fire (LIF) model')
+parser.add_argument('--tau', type=float, default=20e-3, choices=[20e-3, 50e-3, 100e-3],
+                    help='time constant for Leaky Integrate and Fire (LIF) model: 20e-3 for dt=1, 50e-3 for dt=4, 100e-3 for dt=8')
 
 parser.add_argument('--num_enc_layers', type=int, default=2, help='number of transformer encoder layers')
 parser.add_argument('--num_dec_layers', type=int, default=2, help='number of transformer decoder layers')
@@ -51,8 +52,9 @@ parser.set_defaults(mixed_precision=True)
 
 parser.add_argument('--dropout', type=float, default=0.0)
 
-parser.add_argument('--dt', type=int, default=4, help='time interval (1, 4, or 8)')
-parser.add_argument('--sp_threshold', type=float, default=0.5, help='spike threshold')
+parser.add_argument('--dt', type=int, default=1, help='time interval (1, 4, or 8)')
+parser.add_argument('--sp_threshold', type=float, default=0.75, choices=[0.75, 0.5],
+                    help='spike threshold: 0.75 for dt=1, 0.5 for dt=4 or 8')
 
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
@@ -89,7 +91,7 @@ train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
 test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
 test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
-save_dir = '/media/windows_data/code/research/outputs/let_flownet_evtcount_dt4_output'
+save_dir = f'/media/windows_data/code/research/outputs/let_flownet_evtcount_dt{args.dt}_output'
 
 arch = "let_flownet_evtcount"
 

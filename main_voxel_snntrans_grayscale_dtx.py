@@ -4,6 +4,7 @@ import h5py
 import numpy as np
 import os
 import os.path
+import random
 import torch
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
@@ -13,16 +14,17 @@ import warnings
 
 from datetime import datetime
 from tensorboardX import SummaryWriter
-from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader
+
 from util.loss_util import AverageMeter
 from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
-from datasets.evt_count_divided.dataset_dtx import DatasetTest, DatasetTrain
-from models import let_flownet_evtcount
+from datasets.voxel.dataset_dtx import DatasetTest, DatasetTrain
+from models import let_flownet_voxel
 from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss
 from loss.photometric_loss_backward import photometric_loss_multiscale
 
-parser = argparse.ArgumentParser(description='let_flownet_evtcount training on several datasets',
+parser = argparse.ArgumentParser(description='let_flownet_voxel training on several datasets',
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
 parser.add_argument('--pretrained', dest='pretrained', default=None,
@@ -40,7 +42,8 @@ parser.add_argument('--norm', default='BN',
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 
-parser.add_argument('--tau', default=100e-3, help='time constant for Leaky Integrate and Fire (LIF) model')
+parser.add_argument('--tau', type=float, default=20e-3, choices=[20e-3, 50e-3, 100e-3],
+                    help='time constant for Leaky Integrate and Fire (LIF) model: 20e-3 for dt=1, 50e-3 for dt=4, 100e-3 for dt=8')
 
 parser.add_argument('--num_enc_layers', type=int, default=2, help='number of transformer encoder layers')
 parser.add_argument('--num_dec_layers', type=int, default=2, help='number of transformer decoder layers')
@@ -51,8 +54,14 @@ parser.set_defaults(mixed_precision=True)
 
 parser.add_argument('--dropout', type=float, default=0.0)
 
-parser.add_argument('--dt', type=int, default=8, help='time interval (1, 4, or 8)')
-parser.add_argument('--sp_threshold', type=float, default=0.5, help='spike threshold')
+parser.add_argument('--dt', type=int, default=1, help='time interval (1, 4, or 8)')
+parser.add_argument('--sp_threshold', type=float, default=0.75, choices=[0.75, 0.5],
+                    help='spike threshold: 0.75 for dt=1, 0.5 for dt=4 or 8')
+
+parser.add_argument('--num_bins', type=int, default=10, help='number of temporal bins for voxel grid')
+
+parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-fpv'],
+                    help='dataset for training')
 
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
@@ -74,24 +83,20 @@ image_resize = 256
 sp_threshold = args.sp_threshold
 div_flow = 1
 
-# dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
-# src_file_dir = '../../../dataset/Event/mvsec/original'
-dataset_dir = '/media/windows_data/code/research/dataset/Event/mvsec/preprocessed'
 src_file_dir = '/media/windows_data/code/research/dataset/Event/mvsec/original'
 
 train_env = args.train_env
 test_env = args.test_env
 
-train_dir = os.path.join(dataset_dir, train_env)
-test_dir = os.path.join(dataset_dir, test_env)
-
 train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
 test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
 test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
-save_dir = '/media/windows_data/code/research/outputs/let_flownet_evtcount_dt8_output'
+uzh_fpv_dataset_path = '/media/windows_data/code/research/dataset/Event/uzh-fpv/data/'
 
-arch = "let_flownet_evtcount"
+save_dir = f'/media/windows_data/code/research/outputs/let_flownet_voxel_multiscale_dt{args.dt}_output'
+
+arch = "let_flownet_voxel"
 
 epochs = 100
 batch_size = 8
@@ -111,14 +116,18 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     valid_batches = 0
 
     for i_batch, data in enumerate(train_loader, 0):
-        # get the inputs
-        former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off, former_gray, latter_gray = data
+        voxel_tensor, former_gray, latter_gray = data
 
-        if torch.sum(former_inputs_on + former_inputs_off) > 0:
+        voxel_nonzero_count = torch.count_nonzero(voxel_tensor)
+        if i_batch % 100 == 0:
+            print(f"Batch {i_batch} received. Count of non-zero voxels: {voxel_nonzero_count}")
+
+        # check if there are any non-zero elements
+        if voxel_nonzero_count > 0:
             print_details = valid_batches % print_freq == 0
 
-            event_data = initInputRepresentation(
-                former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off)
+            # No need for initInputRepresentation; shape is already [Batch, 2, H, W, num_bins]
+            event_data = voxel_tensor.to(device)
 
             # --- MIXED PRECISION FORWARD PASS ---
             with torch.amp.autocast('cuda', enabled=args.mixed_precision, dtype=torch.bfloat16):
@@ -130,9 +139,8 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             # This prevents grid_sample and division underflow NaNs in the loss!
             flow_preds_fp32 = [f.float() for f in flow_predictions]
             
-            # ---> It is a 5D tensor, so we must collapse dims 1 (Channels) and 4 (Bins) <---
             event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
-
+            
             photometric_loss = photometric_loss_multiscale(
                 former_gray[:, 0, :, :].to(device).float(), 
                 latter_gray[:, 0, :, :].to(device).float(), 
@@ -204,65 +212,68 @@ def validate(test_loader, model, epoch, output_writers):
     print_freq = 100
 
     for i_batch, data in enumerate(test_loader, 0):
-        former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off, ts_f, ts_l = data
+        voxel_tensor, ts_f, ts_l = data
 
         # Only for outdoor_day1, limit to 800 frames to match Spike-FlowNet
         if 'outdoor_day1' in test_env and i_batch >= 800:
             break
 
-        if torch.sum(former_inputs_on + former_inputs_off) > 0:
-            event_data = initInputRepresentation(
-                former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off)
+        # check if there are any non-zero elements
+        if torch.count_nonzero(voxel_tensor) > 0:
+            event_data = voxel_tensor.to(device)
 
             # compute output
             output = model(event_data, image_resize, sp_threshold)
 
             # ---> Extract final scale if using Multi-Scale <---
             if isinstance(output, list):
-                output = output[-1]
+                output = output[-1]  # Extract flow3 (the final 256x256 prediction)
 
             output_temp = output.cpu()
 
-            # Calculate the scaling factors
+            # Interpolate natively in PyTorch
+            output_resized = torch.nn.functional.interpolate(
+                output_temp, size=(image_resize, image_resize), mode='bilinear', align_corners=False
+            )
+
+            # ---> CRITICAL FIX: Scale the flow magnitude by the spatial upsample factor <---
             scale_h = image_resize / output_temp.size(2)
             scale_w = image_resize / output_temp.size(3)
+            output_resized[:, 0, :, :] *= scale_w
+            output_resized[:, 1, :, :] *= scale_h
+            
+            # Permute from [Channels, H, W] to [H, W, Channels] and convert to clean numpy
+            pred_flow = output_resized[0].permute(1, 2, 0).numpy()
 
-            pred_flow = np.zeros((image_resize, image_resize, 2), dtype=np.float32)
-
-            # Multiply by scale_w for the x-flow and scale_h for the y-flow
-            pred_flow[:, :, 0] = cv2.resize(np.array(output_temp[0, 0, :, :]), 
-                                            (image_resize, image_resize), interpolation=cv2.INTER_LINEAR) * scale_w
-            pred_flow[:, :, 1] = cv2.resize(np.array(output_temp[0, 1, :, :]), 
-                                            (image_resize, image_resize), interpolation=cv2.INTER_LINEAR) * scale_h
-
-            u_gt_all = np.array(gt_temp[:, 0, :, :])
-            v_gt_all = np.array(gt_temp[:, 1, :, :])
+            u_gt_all = gt_temp[:, 0, :, :]
+            v_gt_all = gt_temp[:, 1, :, :]
 
             u_gt, v_gt = estimate_corresponding_gt_flow(
-                u_gt_all, v_gt_all, gt_ts_temp, np.array(ts_f), np.array(ts_l))
+                u_gt_all, v_gt_all, gt_ts_temp, ts_f.numpy(), ts_l.numpy())
             gt_flow = np.stack((u_gt, v_gt), axis=2)
+
+            # Mask derivation for Metric Calculation & Visualization
+            mask_tensor = torch.sum((event_data[0] != 0).float(), dim=(0, 3)).cpu()
+            mask_temp_np = mask_tensor.numpy() > 0
 
             #   ----------- Visualization
             if epoch < 0 and not torch.cuda.is_available():
-                mask_temp = former_inputs_on + former_inputs_off + \
-                    latter_inputs_on + latter_inputs_off
-                mask_temp = torch.sum(torch.sum(mask_temp, 0), 2)
-                mask_temp_np = np.squeeze(np.array(mask_temp)) > 0
-
-                spike_image = mask_temp
-                spike_image[spike_image > 0] = 255
-                cv2.imshow('Spike Image', np.array(
-                    spike_image, dtype=np.uint8))
+                # Clean conversion to uint8
+                spike_image = mask_temp_np.astype(np.uint8) * 255
+                cv2.imshow('Spike Image', spike_image)
 
                 gray = cv2.resize(
                     gray_image[i_batch], (scale*image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
                 cv2.imshow('Gray Image', cv2.cvtColor(
                     gray, cv2.COLOR_BGR2RGB))
 
-                out_temp = np.array(output_temp.cpu().detach())
-                x_flow = cv2.resize(np.array(out_temp[0, 0, :, :]), (
+                # Extract to a clean NumPy array ONCE
+                out_temp = output_temp.cpu().detach().numpy()
+                
+                # Directly slice the NumPy array (no np.array() wrappers)
+                x_flow = cv2.resize(out_temp[0, 0, :, :], (
                     scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
-                y_flow = cv2.resize(np.array(out_temp[0, 1, :, :]), (
+                y_flow = cv2.resize(out_temp[0, 1, :, :], (
                     scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
                 rgb_flow = flow_viz_np(x_flow, y_flow)
                 cv2.imshow('Predicted Flow', cv2.cvtColor(
@@ -276,9 +287,9 @@ def validate(test_loader, model, epoch, output_writers):
                 cv2.imshow('GT Flow', cv2.cvtColor(
                     gt_flow_large, cv2.COLOR_BGR2RGB))
 
-                x_flow_masked = cv2.resize(np.array(out_temp[0, 0, :, :] * mask_temp_np), (
+                x_flow_masked = cv2.resize(out_temp[0, 0, :, :] * mask_temp_np, (
                     scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
-                y_flow_masked = cv2.resize(np.array(out_temp[0, 1, :, :] * mask_temp_np), (
+                y_flow_masked = cv2.resize(out_temp[0, 1, :, :] * mask_temp_np, (
                     scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
                 rgb_flow_masked = flow_viz_np(x_flow_masked, y_flow_masked)
                 cv2.imshow('Masked Predicted Flow', cv2.cvtColor(
@@ -310,7 +321,7 @@ def validate(test_loader, model, epoch, output_writers):
             is_car_flag = 'outdoor' in test_env
 
             AEE, percent_Outlier, n_points, AEE_sum_temp, AEE_gt, AEE_sum_temp_gt = flow_error_dense(
-                gt_flow, pred_flow, (torch.sum(torch.sum(torch.sum(event_data, dim=0), dim=0), dim=2)).cpu(), is_car=is_car_flag)
+                gt_flow, pred_flow, mask_tensor, is_car=is_car_flag)
 
             AEE_sum = AEE_sum + div_flow * AEE
             AEE_sum_sum = AEE_sum_sum + AEE_sum_temp
@@ -342,37 +353,14 @@ def validate(test_loader, model, epoch, output_writers):
         .format(AEE_sum / iters, AEE_sum_sum / iters, AEE_sum_gt / iters, AEE_sum_sum_gt / iters, percent_Outlier_sum / iters, total_points / iters))
     print('===============================================================')
 
-    gt_temp = None
-
     return AEE_sum / iters
-
-
-def initInputRepresentation(former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off):
-
-    input_representation = torch.zeros(
-        former_inputs_on.size(0), 4, image_resize, image_resize, former_inputs_on.size(3)).float()
-
-    for b in range(4):
-        if b == 0:
-            input_representation[:, 0, :, :, :] = former_inputs_on
-        elif b == 1:
-            input_representation[:, 1, :, :, :] = former_inputs_off
-        elif b == 2:
-            input_representation[:, 2, :, :, :] = latter_inputs_on
-        elif b == 3:
-            input_representation[:, 3, :, :, :] = latter_inputs_off
-
-    return input_representation.type(torch.FloatTensor).to(device)
 
 
 def main():
     global args
 
-    workers = 4
+    workers = 8
     best_EPE = -1
-    evaluate_interval = 3
-
-    val_fail_times_max = 8
     val_fail_times = 0
 
     d_label = h5py.File(test_gt_file, 'r')
@@ -399,7 +387,7 @@ def main():
         output_writers.append(SummaryWriter(
             os.path.join(save_path, 'test', str(i))))
 
-    test_dataset = DatasetTest(args.dt, test_src_file, test_dir, gt_start_time=gt_start)
+    test_dataset = DatasetTest(args.dt, test_src_file, gt_start_time=gt_start, num_bins=args.num_bins)
     test_loader = DataLoader(dataset=test_dataset,
                              batch_size=1,
                              shuffle=False,
@@ -414,7 +402,7 @@ def main():
         network_data = None
         print(f"=> creating model '{arch}'")
 
-    model = let_flownet_evtcount.__dict__[arch](args, device, network_data).to(device)
+    model = let_flownet_voxel.__dict__[arch](args, device, network_data).to(device)
 
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"=======================================================")
@@ -467,7 +455,7 @@ def main():
             optimizer, start_factor=0.01, end_factor=1.0, total_iters=args.warmup_epochs
         )
         scheduler_multistep = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, milestones=[5, 10, 20, 30, 40, 50, 70, 90], gamma=0.7
+            optimizer, milestones=[15, 30, 45, 60, 80], gamma=0.5
         )
         scheduler = torch.optim.lr_scheduler.SequentialLR(
             optimizer, schedulers=[scheduler_warmup, scheduler_multistep], milestones=[args.warmup_epochs]
@@ -475,7 +463,7 @@ def main():
     else:
         # TRUE 0-Warmup: Immediately start at base LR and only apply multistep decay
         scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, milestones=[5, 10, 20, 30, 40, 50, 70, 90], gamma=0.7
+            optimizer, milestones=[15, 30, 45, 60, 80], gamma=0.5
         )
         
     # ---> FIX: Physically fast-forward the scheduler to sync the optimizer's internal LRs <---
@@ -484,26 +472,62 @@ def main():
         for _ in range(args.start_epoch):
             scheduler.step()
 
-    # ---> FIX: Pure Tensor transforms (No PIL conversion), identical to the Voxel pipeline
+    # Use strict rigid transformations to preserve SNN spike density and physical scaling
     co_transform = transforms.Compose([
         transforms.RandomCrop((256, 256)),
         transforms.RandomHorizontalFlip(0.5),
         transforms.RandomVerticalFlip(0.5)
     ])
 
-    train_dataset = DatasetTrain(
-        args.dt,
-        train_src_file,
-        train_dir,
-        transform=co_transform,
-        is_fine_tune=args.train_env=='outdoor_day2'
-    )
-    train_loader = DataLoader(
-        dataset=train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=workers
-    )
+    assert (args.train_dataset in ['mvsec', 'uzh-fpv'])
+
+    if args.train_dataset == 'mvsec':
+        train_datasets = DatasetTrain(
+            args.dt,
+            train_src_file,
+            transform=co_transform,
+            is_fine_tune=args.train_env=='outdoor_day2',
+            num_bins=args.num_bins
+        )
+        train_loader = DataLoader(
+            dataset=train_datasets,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=workers
+        )
+    elif args.train_dataset == 'uzh-fpv':
+        uzh_datasets = [
+            uzh_fpv_dataset_path + 'indoor_forward_3.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_5.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_6.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_7.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_8.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_9.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_10.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_11.h5',
+            uzh_fpv_dataset_path + 'indoor_forward_12.h5'
+        ]
+        
+        # Initialize individual DatasetTrain objects and store them in a list
+        train_loader = []
+        for dataset_path in uzh_datasets:
+            print(f"Loading UZH FPV dataset {dataset_path}...")
+            single_dataset = DatasetTrain(
+                args.dt, 
+                dataset_path, 
+                transform=co_transform, 
+                num_bins=args.num_bins
+            )
+            # Create a separate loader for EACH file
+            single_loader = DataLoader(
+                dataset=single_dataset, 
+                batch_size=batch_size, 
+                shuffle=True, 
+                num_workers=workers, 
+                pin_memory=True, 
+                drop_last=True
+            )
+            train_loader.append(single_loader)
 
     # Initialize Mixed Precision Scaler
     scaler = torch.amp.GradScaler('cuda', enabled=args.mixed_precision)
@@ -513,7 +537,21 @@ def main():
         current_lr = optimizer.param_groups[0]['lr']
         print(f"Learning Rate: {current_lr:.6f}")
 
-        train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler)
+        if args.train_dataset == 'uzh-fpv':
+            # Shuffle the order we read the 9 HDF5 files every epoch
+            random.shuffle(train_loader)
+            
+            epoch_loss = 0
+            for loader in train_loader:
+                # Train fully on one file before moving to the next
+                loss = train(loader, model, optimizer, epoch, train_writer, scaler)
+                epoch_loss += loss
+            
+            train_loss = epoch_loss / len(train_loader)
+        else:
+            # Standard MVSEC single-loader logic
+            train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler)
+
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
 
         print(f"Mean Training Loss: {train_loss:.3f} of epoch {epoch}")
