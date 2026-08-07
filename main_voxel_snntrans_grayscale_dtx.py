@@ -367,12 +367,11 @@ def main():
     gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
     d_label.close()
 
-    save_path = '{},{},epochs{},bat{},lr{}'.format(
+    save_path = '{},bat{},lr{},bin{}'.format(
         arch,
-        args.solver,
-        epochs,
         batch_size,
-        args.lr)
+        args.lr,
+        args.num_bins)
 
     timestamp = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M")
     save_path = os.path.join(timestamp, save_path)
@@ -579,7 +578,8 @@ def main():
                     'arch': arch,
                     'state_dict': model.module.state_dict(),
                     'best_EPE': best_EPE,
-                    'div_flow': div_flow
+                    'div_flow': div_flow,
+                    'num_bins': args.num_bins
                 }, is_best, save_path, filename=filename)
 
             # check if exit criteria is met
