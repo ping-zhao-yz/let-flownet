@@ -83,7 +83,7 @@ image_resize = 256
 sp_threshold = args.sp_threshold
 div_flow = 1
 
-src_file_dir = '/media/windows_data/code/research/dataset/Event/mvsec/original'
+src_file_dir = '/scratch/let-flownet/dataset/Event/mvsec/original'
 
 train_env = args.train_env
 test_env = args.test_env
@@ -92,9 +92,9 @@ train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
 test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
 test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
-uzh_fpv_dataset_path = '/media/windows_data/code/research/dataset/Event/uzh-fpv/data/'
+uzh_fpv_dataset_path = '/scratch/let-flownet/dataset/Event/uzh-fpv/data/'
 
-save_dir = f'/media/windows_data/code/research/outputs/let_flownet_voxel_multiscale_dt{args.dt}_output'
+save_dir = f'/scratch/let-flownet/outputs/let_flownet_voxel_multiscale_dt{args.dt}_output'
 
 arch = "let_flownet_voxel"
 
