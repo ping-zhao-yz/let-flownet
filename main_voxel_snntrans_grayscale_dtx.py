@@ -187,14 +187,26 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_m
             kd_loss = 0.0
             if teacher_model is not None:
                 mse_loss = nn.MSELoss()
-                for s_pred, t_pred in zip(flow_preds_fp32, teacher_preds_fp32):
-                    kd_loss += mse_loss(s_pred, t_pred)
-                kd_loss = kd_loss / len(flow_preds_fp32)
-                if print_details:
-                    print(f'KD Loss: {kd_loss.item():.2f}')
+                # Check if we are doing Top-Scale Anchor (Teacher is single-scale, Student is multi-scale)
+                if len(teacher_preds_fp32) == 1 and len(flow_preds_fp32) > 1:
+                    # Apply Distillation Loss ONLY to the absolute final, highest-resolution output
+                    kd_loss = mse_loss(flow_preds_fp32[-1], teacher_preds_fp32[-1])
+                    if print_details:
+                        print(f'KD Loss (Top-Scale Anchor): {kd_loss.item():.2f}')
+                else:
+                    # Standard Multi-Scale KD (Teacher and Student have same scales)
+                    for s_pred, t_pred in zip(flow_preds_fp32, teacher_preds_fp32):
+                        kd_loss += mse_loss(s_pred, t_pred)
+                    kd_loss = kd_loss / len(flow_preds_fp32)
+                    if print_details:
+                        print(f'KD Loss (Multi-Scale): {kd_loss.item():.2f}')
+
+            # Apply a weighting factor to Distillation Loss to balance against Photometric Loss
+            lambda_KD = 100.0
+            kd_loss_scaled = kd_loss * lambda_KD if teacher_model is not None else 0.0
 
             # total_loss
-            loss = photometric_loss + smoothness_loss + kd_loss
+            loss = photometric_loss + smoothness_loss + kd_loss_scaled
 
             optimizer.zero_grad()
 
@@ -213,11 +225,17 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_m
 
             # record loss and EPE
             train_writer.add_scalar('train_loss', loss.item(), iter_g)
+            train_writer.add_scalar('photometric_loss', photometric_loss.item(), iter_g)
+            train_writer.add_scalar('smoothness_loss', smoothness_loss.item(), iter_g)
+            if teacher_model is not None:
+                train_writer.add_scalar('kd_loss_scaled', kd_loss_scaled.item(), iter_g)
+                
             losses.update(loss.item(), event_data.size(0))
 
             if print_details:
                 now = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M-%S")
-                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses}, photometric_loss: {round(photometric_loss.item(), 2)}, smoothness_loss: {smoothness_loss.item():.2f}')
+                kd_val = kd_loss_scaled.item() if teacher_model is not None else 0.0
+                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses}, photometric_loss: {photometric_loss.item():.2f}, smoothness_loss: {smoothness_loss.item():.2f}, kd_loss_scaled: {kd_val:.2f}')
                 print('-------------------------------------------------------')
 
             iter_g += 1
