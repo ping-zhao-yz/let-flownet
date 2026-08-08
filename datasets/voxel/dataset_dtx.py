@@ -117,6 +117,13 @@ class DatasetTrain(Dataset):
             voxel_flat = voxel_tensor.view(2 * self.num_bins, 256, 256)
             
             if self.teacher_train_dir is not None:
+                # Crop teacher event data to match the 256x256 voxel/image grid
+                if aa.shape[0] == 260 and aa.shape[1] == 346:
+                    aa = aa[2:258, 45:301, :]
+                    bb = bb[2:258, 45:301, :]
+                    cc = cc[2:258, 45:301, :]
+                    dd = dd[2:258, 45:301, :]
+                    
                 aa_t = torch.from_numpy(aa).float().permute(2, 0, 1)
                 bb_t = torch.from_numpy(bb).float().permute(2, 0, 1)
                 cc_t = torch.from_numpy(cc).float().permute(2, 0, 1)
