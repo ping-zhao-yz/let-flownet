@@ -562,7 +562,7 @@ def main():
     if args.train_dataset == 'mvsec':
         teacher_train_dir = None
         if args.teacher_pretrained:
-            dataset_dir = '/scratch/let-flownet/dataset/Event/mvsec/preprocessed'
+            dataset_dir = f'{base_dir}/dataset/Event/mvsec/preprocessed'
             teacher_train_dir = os.path.join(dataset_dir, args.train_env)
 
         train_datasets = DatasetTrain(
