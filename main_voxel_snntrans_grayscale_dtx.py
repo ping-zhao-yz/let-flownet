@@ -80,6 +80,9 @@ parser.add_argument('--save_thred', type=float, default=1.05, help='threashold f
 parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
                     help='Host environment to determine dataset paths')
 
+parser.add_argument('--kd_strategy', default='top_scale', choices=['multi_scale', 'top_scale'],
+                    help='Knowledge Distillation strategy: multi_scale (all scales) or top_scale (only highest resolution)')
+
 args = parser.parse_args()
 
 # Initializations
@@ -198,14 +201,14 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_m
             kd_loss = 0.0
             if teacher_model is not None:
                 mse_loss = nn.MSELoss()
-                # Check if we are doing Top-Scale Anchor (Teacher is single-scale, Student is multi-scale)
-                if len(teacher_preds_fp32) == 1 and len(flow_preds_fp32) > 1:
+                # Check if we are doing Top-Scale Anchor (either forced, or Teacher is purely single-scale)
+                if len(teacher_preds_fp32) == 1 or args.kd_strategy == 'top_scale':
                     # Apply Distillation Loss ONLY to the absolute final, highest-resolution output
                     kd_loss = mse_loss(flow_preds_fp32[-1], teacher_preds_fp32[-1])
                     if print_details:
                         print(f'KD Loss (Top-Scale Anchor): {kd_loss.item():.2f}')
                 else:
-                    # Standard Multi-Scale KD (Teacher and Student have same scales)
+                    # Standard Multi-Scale KD (Teacher and Student have fully trained matching scales)
                     for s_pred, t_pred in zip(flow_preds_fp32, teacher_preds_fp32):
                         kd_loss += mse_loss(s_pred, t_pred)
                     kd_loss = kd_loss / len(flow_preds_fp32)
@@ -213,7 +216,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_m
                         print(f'KD Loss (Multi-Scale): {kd_loss.item():.2f}')
 
             # Apply a weighting factor to Distillation Loss to balance against Photometric Loss
-            lambda_KD = 100.0
+            lambda_KD = 10000.0
             kd_loss_scaled = kd_loss * lambda_KD if teacher_model is not None else 0.0
 
             # total_loss
