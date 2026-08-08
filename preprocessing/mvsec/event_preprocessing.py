@@ -1,7 +1,7 @@
 import os
 import h5py
 import argparse
-from event_parser import EventParser
+from preprocessing.mvsec.event_parser import EventParser
 
 
 def main():

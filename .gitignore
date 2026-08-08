@@ -22,6 +22,10 @@ dist/
 spike_flownet_output/
 spikeflownet/
 
+let-flownet-env-logs/
+let-flownet-env-outputs/
+design/
+
 __pycache__/
 .pytest_cache/
 
