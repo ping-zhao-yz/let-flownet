@@ -66,6 +66,9 @@ parser.add_argument('--max_fail_times', type=int, default=5, help='maximum failu
 
 parser.add_argument('--save_thred', type=float, default=1.05, help='threashold for saving the checkpoint')
 
+parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
+                    help='Host environment to determine dataset paths')
+
 args = parser.parse_args()
 
 # Initializations
@@ -76,10 +79,13 @@ image_resize = 256
 sp_threshold = args.sp_threshold
 div_flow = 1
 
-# dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
-# src_file_dir = '../../../dataset/Event/mvsec/original'
-dataset_dir = '/scratch/let-flownet/dataset/Event/mvsec/preprocessed'
-src_file_dir = '/scratch/let-flownet/dataset/Event/mvsec/original'
+if args.train_host == 'local':
+    base_dir = '/media/windows_data/code/research'
+else:
+    base_dir = '/scratch/let-flownet'
+
+dataset_dir = f'{base_dir}/dataset/Event/mvsec/preprocessed'
+src_file_dir = f'{base_dir}/dataset/Event/mvsec/original'
 
 train_env = args.train_env
 test_env = args.test_env
@@ -91,7 +97,7 @@ train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
 test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
 test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
-save_dir = f'/scratch/let-flownet/outputs/let_flownet_evtcount_dt{args.dt}_output'
+save_dir = f'{base_dir}/outputs/let_flownet_evtcount_dt{args.dt}_output'
 
 arch = "let_flownet_evtcount"
 

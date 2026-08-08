@@ -77,6 +77,9 @@ parser.add_argument('--max_fail_times', type=int, default=5, help='maximum failu
 
 parser.add_argument('--save_thred', type=float, default=1.05, help='threashold for saving the checkpoint')
 
+parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
+                    help='Host environment to determine dataset paths')
+
 args = parser.parse_args()
 
 # Initializations
@@ -87,7 +90,12 @@ image_resize = 256
 sp_threshold = args.sp_threshold
 div_flow = 1
 
-src_file_dir = '/scratch/let-flownet/dataset/Event/mvsec/original'
+if args.train_host == 'local':
+    base_dir = '/media/windows_data/code/research'
+else:
+    base_dir = '/scratch/let-flownet'
+
+src_file_dir = f'{base_dir}/dataset/Event/mvsec/original'
 
 train_env = args.train_env
 test_env = args.test_env
@@ -96,9 +104,9 @@ train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
 test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
 test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
-uzh_fpv_dataset_path = '/scratch/let-flownet/dataset/Event/uzh-fpv/data/'
+uzh_fpv_dataset_path = f'{base_dir}/dataset/Event/uzh-fpv/data/'
 
-save_dir = f'/scratch/let-flownet/outputs/let_flownet_voxel_multiscale_dt{args.dt}_output'
+save_dir = f'{base_dir}/outputs/let_flownet_voxel_multiscale_dt{args.dt}_output'
 
 arch = "let_flownet_voxel"
 
@@ -167,7 +175,10 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_m
                 event_data_teacher = initInputRepresentation(aaa, bbb, ccc, ddd, device, image_resize)
                 with torch.no_grad():
                     teacher_predictions = teacher_model(event_data_teacher, image_resize, sp_threshold)
-                    teacher_preds_fp32 = [f.float() for f in teacher_predictions]
+                    if isinstance(teacher_predictions, list):
+                        teacher_preds_fp32 = [f.float() for f in teacher_predictions]
+                    else:
+                        teacher_preds_fp32 = [teacher_predictions.float()]
 
             event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
             
