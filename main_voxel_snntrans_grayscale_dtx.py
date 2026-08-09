@@ -24,6 +24,7 @@ from models import let_flownet_voxel, let_flownet_evtcount
 from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss
 from loss.photometric_loss_backward import photometric_loss_multiscale
 import torch.nn as nn
+import torch.nn.functional as F
 
 parser = argparse.ArgumentParser(description='let_flownet_voxel training on several datasets',
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -80,8 +81,8 @@ parser.add_argument('--save_thred', type=float, default=1.05, help='threashold f
 parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
                     help='Host environment to determine dataset paths')
 
-parser.add_argument('--kd_strategy', default='top_scale', choices=['multi_scale', 'top_scale'],
-                    help='Knowledge Distillation strategy: multi_scale (all scales) or top_scale (only highest resolution)')
+parser.add_argument('--kd_strategy', default='interpolated', choices=['multi_scale', 'top_scale', 'interpolated'],
+                    help='Knowledge Distillation strategy: multi_scale (all scales), top_scale (only highest resolution), or interpolated (downsample teacher to all student scales)')
 
 args = parser.parse_args()
 
@@ -201,8 +202,31 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_m
             kd_loss = 0.0
             if teacher_model is not None:
                 mse_loss = nn.MSELoss()
-                # Check if we are doing Top-Scale Anchor (either forced, or Teacher is purely single-scale)
-                if len(teacher_preds_fp32) == 1 or args.kd_strategy == 'top_scale':
+                if args.kd_strategy == 'interpolated':
+                    # Interpolated Multi-Scale Distillation
+                    teacher_top_scale = teacher_preds_fp32[-1]
+                    t_h, t_w = teacher_top_scale.size(2), teacher_top_scale.size(3)
+                    
+                    for s_pred in flow_preds_fp32:
+                        s_h, s_w = s_pred.size(2), s_pred.size(3)
+                        
+                        if s_h != t_h or s_w != t_w:
+                            # Interpolate Teacher's top scale to match Student's current scale
+                            t_pred_downsampled = F.interpolate(
+                                teacher_top_scale, size=(s_h, s_w), mode='bilinear', align_corners=False
+                            )
+                            # Scale the flow magnitude to match the new spatial resolution
+                            scale_factor = s_h / t_h
+                            t_pred_downsampled = t_pred_downsampled * scale_factor
+                        else:
+                            t_pred_downsampled = teacher_top_scale
+                            
+                        kd_loss += mse_loss(s_pred, t_pred_downsampled)
+                        
+                    kd_loss = kd_loss / len(flow_preds_fp32)
+                    if print_details:
+                        print(f'KD Loss (Interpolated): {kd_loss.item():.2f}')
+                elif len(teacher_preds_fp32) == 1 or args.kd_strategy == 'top_scale':
                     # Apply Distillation Loss ONLY to the absolute final, highest-resolution output
                     kd_loss = mse_loss(flow_preds_fp32[-1], teacher_preds_fp32[-1])
                     if print_details:
@@ -216,7 +240,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_m
                         print(f'KD Loss (Multi-Scale): {kd_loss.item():.2f}')
 
             # Apply a weighting factor to Distillation Loss to balance against Photometric Loss
-            lambda_KD = 10000.0
+            lambda_KD = 50000.0
             kd_loss_scaled = kd_loss * lambda_KD if teacher_model is not None else 0.0
 
             # total_loss
