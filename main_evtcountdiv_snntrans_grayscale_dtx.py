@@ -390,8 +390,7 @@ def main():
     save_path = '{},bat{},lr{},bin{}'.format(
         arch,
         batch_size,
-        args.lr,
-        args.num_bins)
+        args.lr)
 
     timestamp = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M")
     save_path = os.path.join(timestamp, save_path)
@@ -548,8 +547,7 @@ def main():
                     'arch': arch,
                     'state_dict': model.module.state_dict(),
                     'best_EPE': best_EPE,
-                    'div_flow': div_flow,
-                    'num_bins': args.num_bins
+                    'div_flow': div_flow
                 }, is_best, save_path, filename=filename)
 
             # check if exit criteria is met
