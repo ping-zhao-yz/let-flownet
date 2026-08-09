@@ -387,7 +387,7 @@ def main():
     gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
     d_label.close()
 
-    save_path = '{},bat{},lr{},bin{}'.format(
+    save_path = '{},bat{},lr{}'.format(
         arch,
         batch_size,
         args.lr)
