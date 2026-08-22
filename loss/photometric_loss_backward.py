@@ -26,11 +26,31 @@ def backward_warp(x, flo):
     # mesh grid
     xx = torch.arange(0, W, device=x.device).view(1, -1).repeat(H, 1)
     yy = torch.arange(0, H, device=x.device).view(-1, 1).repeat(1, W)
-    xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
-    yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
-    grid = torch.cat((xx, yy), 1).float()
+    xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1).float()
+    yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1).float()
 
-    vgrid = grid + flo
+    if flo.size(1) == 3:
+        # Rigid-body transformation: v_x, v_y, omega
+        v_x = flo[:, 0:1, :, :]
+        v_y = flo[:, 1:2, :, :]
+        omega = flo[:, 2:3, :, :]
+
+        # Center coordinates for rotation
+        cx, cy = (W - 1) / 2.0, (H - 1) / 2.0
+        xx_c = xx - cx
+        yy_c = yy - cy
+
+        cos_w = torch.cos(omega)
+        sin_w = torch.sin(omega)
+
+        x_new = xx_c * cos_w - yy_c * sin_w + cx + v_x
+        y_new = xx_c * sin_w + yy_c * cos_w + cy + v_y
+
+        vgrid = torch.cat((x_new, y_new), 1)
+    else:
+        # Standard linear translation
+        grid = torch.cat((xx, yy), 1)
+        vgrid = grid + flo
 
     # scale grid to [-1,1]
     vgrid[:, 0, :, :] = 2.0 * vgrid[:, 0, :, :].clone() / max(W - 1, 1) - 1.0
@@ -82,20 +102,23 @@ def photometric_loss_multiscale(prev_images_temp, next_images_temp, event_images
 
         valid_mask = (event_mask_scaled > 0).float()
 
+        # Implement soft occlusion masking (E2FAI)
+        occlusion_weights = valid_mask * 1.0 + (1.0 - valid_mask) * 0.1
+        
         # Boundary Margin: Ignore the outer 5% to prevent out-of-frame warping outliers
         margin_y = max(1, int(height * 0.05))
         margin_x = max(1, int(width * 0.05))
-        valid_mask[:, :, :margin_y, :] = 0
-        valid_mask[:, :, -margin_y:, :] = 0
-        valid_mask[:, :, :, :margin_x] = 0
-        valid_mask[:, :, :, -margin_x:] = 0
+        occlusion_weights[:, :, :margin_y, :] = 0
+        occlusion_weights[:, :, -margin_y:, :] = 0
+        occlusion_weights[:, :, :, :margin_x] = 0
+        occlusion_weights[:, :, :, -margin_x:] = 0
 
         # 3. Calculate Loss
         next_images_warped = backward_warp(next_images_scaled, flow)
         error_temp_backward = next_images_warped - prev_images_scaled
         
-        # Pass the mask to charbonnier to ignore blank regions (Returns a sum)
-        photometric_loss_scale = charbonnier_loss(error_temp_backward, mask=valid_mask)
+        # Pass the occlusion weights to charbonnier (Returns a sum)
+        photometric_loss_scale = charbonnier_loss(error_temp_backward, mask=occlusion_weights)
 
         if print_details:
             print(f'photometric_loss (scale {i}): {photometric_loss_scale.item()}')
@@ -146,19 +169,22 @@ def photometric_loss_single(prev_images_temp, next_images_temp, event_images, ou
     
     valid_mask = (event_mask_scaled > 0).float()
 
+    # Implement soft occlusion masking (E2FAI)
+    occlusion_weights = valid_mask * 1.0 + (1.0 - valid_mask) * 0.1
+
     # Boundary Margin: Ignore the outer 5% to prevent out-of-frame warping outliers
     margin_y = max(1, int(height * 0.05))
     margin_x = max(1, int(width * 0.05))
-    valid_mask[:, :, :margin_y, :] = 0
-    valid_mask[:, :, -margin_y:, :] = 0
-    valid_mask[:, :, :, :margin_x] = 0
-    valid_mask[:, :, :, -margin_x:] = 0
+    occlusion_weights[:, :, :margin_y, :] = 0
+    occlusion_weights[:, :, -margin_y:, :] = 0
+    occlusion_weights[:, :, :, :margin_x] = 0
+    occlusion_weights[:, :, :, -margin_x:] = 0
     
     # 3. Calculate Loss
     next_images_warped = backward_warp(next_images_scaled, flow)
     error_temp_backward = next_images_warped - prev_images_scaled
     
-    # Pass the mask to charbonnier to ignore blank regions
-    photometric_loss = charbonnier_loss(error_temp_backward, mask=valid_mask)
+    # Pass the occlusion weights to charbonnier
+    photometric_loss = charbonnier_loss(error_temp_backward, mask=occlusion_weights)
 
     return photometric_loss

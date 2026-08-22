@@ -32,9 +32,6 @@ parser = argparse.ArgumentParser(description='let_flownet_voxel training on seve
 parser.add_argument('--pretrained', dest='pretrained', default=None,
                     help='path to pre-trained model')
 
-parser.add_argument('--teacher_pretrained', default=None,
-                    help='path to pre-trained teacher model (Event Count) for Knowledge Distillation')
-
 parser.add_argument('--solver', default='adam', choices=['adam', 'sgd'],
                     help='solver algorithms')
 
@@ -136,7 +133,7 @@ def initInputRepresentation(former_inputs_on, former_inputs_off, latter_inputs_o
     return input_representation.type(torch.FloatTensor).to(device)
 
 
-def train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_model=None):
+def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     global iter_g, args, image_resize, sp_threshold
     np.set_printoptions(precision=2)
     losses = AverageMeter()
@@ -149,10 +146,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_m
     valid_batches = 0
 
     for i_batch, data in enumerate(train_loader, 0):
-        if teacher_model is not None:
-            voxel_tensor, aaa, bbb, ccc, ddd, former_gray, latter_gray = data
-        else:
-            voxel_tensor, former_gray, latter_gray = data
+        voxel_tensor, former_gray, latter_gray = data
 
         voxel_nonzero_count = torch.count_nonzero(voxel_tensor)
         if i_batch % 100 == 0:
@@ -174,15 +168,6 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_m
             # 2. Step OUTSIDE the autocast block and explicitly cast to float32.
             # This prevents grid_sample and division underflow NaNs in the loss!
             flow_preds_fp32 = [f.float() for f in flow_predictions]
-            
-            if teacher_model is not None:
-                event_data_teacher = initInputRepresentation(aaa, bbb, ccc, ddd, device, image_resize)
-                with torch.no_grad():
-                    teacher_predictions = teacher_model(event_data_teacher, image_resize, sp_threshold)
-                    if isinstance(teacher_predictions, list):
-                        teacher_preds_fp32 = [f.float() for f in teacher_predictions]
-                    else:
-                        teacher_preds_fp32 = [teacher_predictions.float()]
 
             event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
             
@@ -206,28 +191,8 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_m
             # Smoothness loss
             smoothness_loss = smooth_loss(flow_preds_for_loss)
 
-            kd_loss = 0.0
-            if teacher_model is not None:
-                mse_loss = nn.MSELoss()
-                if len(teacher_preds_fp32) == 1 or args.kd_strategy == 'top_scale':
-                    # Apply Distillation Loss ONLY to the absolute final, highest-resolution output
-                    kd_loss = mse_loss(flow_preds_fp32[-1], teacher_preds_fp32[-1])
-                    if print_details:
-                        print(f'KD Loss (Top-Scale Anchor): {kd_loss.item():.2f}')
-                else:
-                    # Standard Multi-Scale KD (Teacher and Student have fully trained matching scales)
-                    for s_pred, t_pred in zip(flow_preds_fp32, teacher_preds_fp32):
-                        kd_loss += mse_loss(s_pred, t_pred)
-                    kd_loss = kd_loss / len(flow_preds_fp32)
-                    if print_details:
-                        print(f'KD Loss (Multi-Scale): {kd_loss.item():.2f}')
-
-            # Apply a weighting factor to Distillation Loss to balance against Photometric Loss
-            lambda_KD = 50000.0
-            kd_loss_scaled = kd_loss * lambda_KD if teacher_model is not None else 0.0
-
             # total_loss
-            loss = photometric_loss + smoothness_loss + kd_loss_scaled
+            loss = photometric_loss + smoothness_loss
 
             optimizer.zero_grad()
 
@@ -248,15 +213,12 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_m
             train_writer.add_scalar('train_loss', loss.item(), iter_g)
             train_writer.add_scalar('photometric_loss', photometric_loss.item(), iter_g)
             train_writer.add_scalar('smoothness_loss', smoothness_loss.item(), iter_g)
-            if teacher_model is not None:
-                train_writer.add_scalar('kd_loss_scaled', kd_loss_scaled.item(), iter_g)
                 
             losses.update(loss.item(), event_data.size(0))
 
             if print_details:
                 now = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M-%S")
-                kd_val = kd_loss_scaled.item() if teacher_model is not None else 0.0
-                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses}, photometric_loss: {photometric_loss.item():.2f}, smoothness_loss: {smoothness_loss.item():.2f}, kd_loss_scaled: {kd_val:.2f}')
+                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses}, photometric_loss: {photometric_loss.item():.2f}, smoothness_loss: {smoothness_loss.item():.2f}')
                 print('-------------------------------------------------------')
 
             iter_g += 1
@@ -321,7 +283,7 @@ def validate(test_loader, model, epoch, output_writers):
             output_resized[:, 1, :, :] *= scale_h
             
             # Permute from [Channels, H, W] to [H, W, Channels] and convert to clean numpy
-            pred_flow = output_resized[0].permute(1, 2, 0).numpy()
+            pred_flow = output_resized[0, :2, :, :].permute(1, 2, 0).numpy()
 
             u_gt_all = gt_temp[:, 0, :, :]
             v_gt_all = gt_temp[:, 1, :, :]
@@ -412,7 +374,7 @@ def validate(test_loader, model, epoch, output_writers):
 
             if i_batch < len(output_writers):  # log first output of first batches
                 output_writers[i_batch].add_image('SpikeT FlowNet Outputs', flow2rgb(
-                    div_flow * output_temp[0], max_value=10), epoch)
+                    div_flow * output_temp[0, :2], max_value=10), epoch)
 
             iters += 1
 
@@ -488,17 +450,6 @@ def main():
     print(f"=======================================================")
 
     model = torch.nn.DataParallel(model).to(device)
-    
-    teacher_model = None
-    if args.teacher_pretrained:
-        print(f"=> loading teacher model 'let_flownet_evtcount' from {args.teacher_pretrained}")
-        map_location = None if torch.cuda.is_available() else torch.device('cpu')
-        teacher_network_data = torch.load(args.teacher_pretrained, map_location)
-        teacher_model = let_flownet_evtcount.__dict__['let_flownet_evtcount'](args, device, teacher_network_data).to(device)
-        teacher_model = torch.nn.DataParallel(teacher_model).to(device)
-        teacher_model.eval()
-        for param in teacher_model.parameters():
-            param.requires_grad = False
 
     cudnn.benchmark = True
 
@@ -570,18 +521,12 @@ def main():
     assert (args.train_dataset in ['mvsec', 'uzh-fpv'])
 
     if args.train_dataset == 'mvsec':
-        teacher_train_dir = None
-        if args.teacher_pretrained:
-            dataset_dir = f'{base_dir}/dataset/Event/mvsec/preprocessed'
-            teacher_train_dir = os.path.join(dataset_dir, args.train_env)
-
         train_datasets = DatasetTrain(
             args.dt,
             train_src_file,
             transform=co_transform,
             is_fine_tune=args.train_env=='outdoor_day2',
-            num_bins=args.num_bins,
-            teacher_train_dir=teacher_train_dir
+            num_bins=args.num_bins
         )
         train_loader = DataLoader(
             dataset=train_datasets,
@@ -590,11 +535,6 @@ def main():
             num_workers=workers
         )
     elif args.train_dataset == 'uzh-fpv':
-        if args.teacher_pretrained:
-            print("WARNING: KD is not supported for UZH-FPV as train_dir preprocessed data is missing. Falling back to non-KD.")
-            args.teacher_pretrained = None
-            teacher_model = None
-
         uzh_datasets = [
             uzh_fpv_dataset_path + 'indoor_forward_3.h5',
             uzh_fpv_dataset_path + 'indoor_forward_5.h5',
@@ -643,13 +583,13 @@ def main():
             epoch_loss = 0
             for loader in train_loader:
                 # Train fully on one file before moving to the next
-                loss = train(loader, model, optimizer, epoch, train_writer, scaler, teacher_model)
+                loss = train(loader, model, optimizer, epoch, train_writer, scaler)
                 epoch_loss += loss
             
             train_loss = epoch_loss / len(train_loader)
         else:
             # Standard MVSEC single-loader logic
-            train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler, teacher_model)
+            train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler)
 
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
 

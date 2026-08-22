@@ -34,6 +34,11 @@ class Let_Flownet_Voxel(BaseModel):
         self.conv_s3 = conv_s(self.batchNorm, 128, 256, stride=2)
         self.conv_s4 = conv_s(self.batchNorm, 256, 512, stride=2)
 
+        self.inh_s1 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1, groups=64, bias=False)
+        self.inh_s2 = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1, groups=128, bias=False)
+        self.inh_s3 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1, groups=256, bias=False)
+        self.inh_s4 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1, groups=512, bias=False)
+
         # use 3 for dt1, and 2 for dt4 and larger (e.g. dt8)
         numerator = 3.0 if dt == 1 else 2.0
         
@@ -116,14 +121,14 @@ class Let_Flownet_Voxel(BaseModel):
             predict_flow(self.batchNorm, 256, 128),
             predict_flow(self.batchNorm, 128, 64),
             predict_flow(self.batchNorm, 128, 64),
-            predict_flow(self.batchNorm, 128, 2)
+            predict_flow(self.batchNorm, 128, 3)
         ])
 
-        # ---> NEW: True 2-Channel Flow Projectors for Multi-Scale Loss <---
+        # ---> NEW: True 3-Channel Flow Projectors for Multi-Scale Loss <---
         self.flow_projectors = nn.ModuleList([
-            nn.Conv2d(128, 2, kernel_size=3, padding=1),
-            nn.Conv2d(64, 2, kernel_size=3, padding=1),
-            nn.Conv2d(64, 2, kernel_size=3, padding=1)
+            nn.Conv2d(128, 3, kernel_size=3, padding=1),
+            nn.Conv2d(64, 3, kernel_size=3, padding=1),
+            nn.Conv2d(64, 3, kernel_size=3, padding=1)
         ])
         
         # Initialize with near-zero weights to prevent chaotic warping in Epoch 0
@@ -154,35 +159,60 @@ class Let_Flownet_Voxel(BaseModel):
         mem_4_total = torch.zeros(input.size(0), 512, int(
             image_resize/16), int(image_resize/16)).to(input.device)
 
+        spike_1 = torch.zeros_like(mem_1)
+        spike_2 = torch.zeros_like(mem_2)
+        spike_3 = torch.zeros_like(mem_3)
+        spike_4 = torch.zeros_like(mem_4)
+
         for i in range(input.size(4)):
             input11 = input[:, :, :, :, i].to(input.device)
 
             current_1 = self.conv_s1(input11)
-            mem_1 = torch.sigmoid(self.alpha1) * mem_1 + current_1
+            G_inh_1 = torch.sigmoid(self.inh_s1(current_1))
+            mem_1 = (torch.sigmoid(self.alpha1) * mem_1 + current_1) * (1 - G_inh_1)
             mem_1, spike_1 = LIF_Neuron(mem_1, threshold)
             mem_1_total = mem_1_total + current_1
+            if i == 0:
+                mem_1_start = mem_1.clone()
+            if i == input.size(4) - 1:
+                mem_1_end = mem_1.clone()
 
             current_2 = self.conv_s2(spike_1)
-            mem_2 = torch.sigmoid(self.alpha2) * mem_2 + current_2
+            G_inh_2 = torch.sigmoid(self.inh_s2(current_2))
+            mem_2 = (torch.sigmoid(self.alpha2) * mem_2 + current_2) * (1 - G_inh_2)
             mem_2, spike_2 = LIF_Neuron(mem_2, threshold)
             mem_2_total = mem_2_total + current_2
+            if i == 0:
+                mem_2_start = mem_2.clone()
+            if i == input.size(4) - 1:
+                mem_2_end = mem_2.clone()
 
             current_3 = self.conv_s3(spike_2)
-            mem_3 = torch.sigmoid(self.alpha3) * mem_3 + current_3
+            G_inh_3 = torch.sigmoid(self.inh_s3(current_3))
+            mem_3 = (torch.sigmoid(self.alpha3) * mem_3 + current_3) * (1 - G_inh_3)
             mem_3, spike_3 = LIF_Neuron(mem_3, threshold)
             mem_3_total = mem_3_total + current_3
+            if i == 0:
+                mem_3_start = mem_3.clone()
+            if i == input.size(4) - 1:
+                mem_3_end = mem_3.clone()
 
             current_4 = self.conv_s4(spike_3)
-            mem_4 = torch.sigmoid(self.alpha4) * mem_4 + current_4
+            G_inh_4 = torch.sigmoid(self.inh_s4(current_4))
+            mem_4 = (torch.sigmoid(self.alpha4) * mem_4 + current_4) * (1 - G_inh_4)
             mem_4, spike_4 = LIF_Neuron(mem_4, threshold)
             mem_4_total = mem_4_total + current_4
+            if i == 0:
+                mem_4_start = mem_4.clone()
+            if i == input.size(4) - 1:
+                mem_4_end = mem_4.clone()
 
         blocks = []
         # Big -> Small
-        blocks.append(mem_1_total)
-        blocks.append(mem_2_total)
-        blocks.append(mem_3_total)
-        blocks.append(mem_4_total)
+        blocks.append(mem_1_total + (mem_1_end - mem_1_start))
+        blocks.append(mem_2_total + (mem_2_end - mem_2_start))
+        blocks.append(mem_3_total + (mem_3_end - mem_3_start))
+        blocks.append(mem_4_total + (mem_4_end - mem_4_start))
 
         # Encoder-Transformers: Token Pyramid Aggregation (TPA) for global spatial context extraction
         """

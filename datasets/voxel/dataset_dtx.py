@@ -39,20 +39,12 @@ def get_raw_events_for_window(dataset_file, index, dt, xoff=45, yoff=2, orig_w=3
     return events_packed
 
 class DatasetTrain(Dataset):
-    def __init__(self, dt, dataset_file, transform=None, is_fine_tune=False, num_bins=10, teacher_train_dir=None):
+    def __init__(self, dt, dataset_file, transform=None, is_fine_tune=False, num_bins=10):
         self.dt = dt
         self.dataset_file = dataset_file
         self.transform = transform
         self.is_fine_tune = is_fine_tune
         self.num_bins = num_bins
-        self.teacher_train_dir = teacher_train_dir
-        
-        if self.teacher_train_dir is not None:
-            self.x = 260
-            self.y = 346
-            self.split = 10
-            self.half_split = int(self.split/2)
-            self.range = int(self.half_split * self.dt)
 
         with h5py.File(dataset_file, 'r') as d_set:
             self.length = d_set['davis']['left']['image_raw'].shape[0]
@@ -61,9 +53,6 @@ class DatasetTrain(Dataset):
         # 1. Update the shape to match our new 2-channel grid (Keep it on CPU)
         voxel_0 = torch.zeros(2, 256, 256, self.num_bins)
         gray_0 = torch.zeros(1, 256, 256)
-        
-        if self.teacher_train_dir is not None:
-            event_0 = torch.zeros(256, 256, self.range)
 
         if index + 100 < self.length and index > 100:
             # 1. Fetch raw events using the helper function
@@ -71,8 +60,6 @@ class DatasetTrain(Dataset):
 
             # Handle empty windows
             if events_packed is None or len(events_packed) == 0:
-                if self.teacher_train_dir is not None:
-                    return voxel_0, event_0, event_0, event_0, event_0, gray_0, gray_0
                 return voxel_0, gray_0, gray_0
 
             # 2. Generate the Voxel Grid
@@ -90,44 +77,9 @@ class DatasetTrain(Dataset):
                 gray_l_raw = d_set['davis']['left']['image_raw'][index + self.dt]
             gray_f = np.uint8(gray_f_raw)
             gray_l = np.uint8(gray_l_raw)
-            
-            # ---> LOAD EVT COUNT DATA <---
-            if self.teacher_train_dir is not None:
-                aa = np.zeros((self.x, self.y, self.range), dtype=np.uint8)
-                bb = np.zeros((self.x, self.y, self.range), dtype=np.uint8)
-                cc = np.zeros((self.x, self.y, self.range), dtype=np.uint8)
-                dd = np.zeros((self.x, self.y, self.range), dtype=np.uint8)
-                
-                if self.dt == 1:
-                    im_onoff = np.load(self.teacher_train_dir + '/event_data/' + str(int(index + 1)) + '.npy')
-                    aa[:, :, :] = im_onoff[0, :, :, 0:5]
-                    bb[:, :, :] = im_onoff[1, :, :, 0:5]
-                    cc[:, :, :] = im_onoff[0, :, :, 5:10]
-                    dd[:, :, :] = im_onoff[1, :, :, 5:10]
-                else:
-                    for k in range(int(self.dt/2)):
-                        im_former = np.load(self.teacher_train_dir + '/event_data/' + str(int(index + k + 1)) + '.npy')
-                        im_latter = np.load(self.teacher_train_dir + '/event_data/' + str(int(index + self.dt/2 + k + 1)) + '.npy')
-                        aa[:, :, self.split * k: self.split * (k + 1)] = im_former[0, :, :, :]
-                        bb[:, :, self.split * k: self.split * (k + 1)] = im_former[1, :, :, :]
-                        cc[:, :, self.split * k: self.split * (k + 1)] = im_latter[0, :, :, :]
-                        dd[:, :, self.split * k: self.split * (k + 1)] = im_latter[1, :, :, :]
 
             # Flatten the 4D tensor to 3D for concatenation
             voxel_flat = voxel_tensor.view(2 * self.num_bins, 256, 256)
-            
-            if self.teacher_train_dir is not None:
-                # Crop teacher event data to match the 256x256 voxel/image grid
-                if aa.shape[0] == 260 and aa.shape[1] == 346:
-                    aa = aa[2:258, 45:301, :]
-                    bb = bb[2:258, 45:301, :]
-                    cc = cc[2:258, 45:301, :]
-                    dd = dd[2:258, 45:301, :]
-                    
-                aa_t = torch.from_numpy(aa).float().permute(2, 0, 1)
-                bb_t = torch.from_numpy(bb).float().permute(2, 0, 1)
-                cc_t = torch.from_numpy(cc).float().permute(2, 0, 1)
-                dd_t = torch.from_numpy(dd).float().permute(2, 0, 1)
             
             # Keep images on CPU
             if gray_f.shape == (260, 346):
@@ -142,50 +94,27 @@ class DatasetTrain(Dataset):
             gray_l_t = gray_l_t / 255.0
 
             # Concatenate on the CPU safely
-            if self.teacher_train_dir is not None:
-                combo = torch.cat([voxel_flat, aa_t, bb_t, cc_t, dd_t, gray_f_t, gray_l_t], dim=0)
-            else:
-                combo = torch.cat([voxel_flat, gray_f_t, gray_l_t], dim=0)
+            combo = torch.cat([voxel_flat, gray_f_t, gray_l_t], dim=0)
 
             # Apply spatial transformation
             combo_transformed = self.transform(combo)
 
             voxel_transformed_flat = combo_transformed[0:2*self.num_bins]
-            if self.teacher_train_dir is not None:
-                r = self.range
-                offset = 2 * self.num_bins
-                aaa = combo_transformed[offset:offset+r]
-                bbb = combo_transformed[offset+r:offset+2*r]
-                ccc = combo_transformed[offset+2*r:offset+3*r]
-                ddd = combo_transformed[offset+3*r:offset+4*r]
             
             gray_f_final = combo_transformed[-2:-1]
             gray_l_final = combo_transformed[-1:]
 
             # Compress outliers and normalize
             voxel_transformed_flat = torch.clamp(voxel_transformed_flat, max=5.0) / 5.0
-            if self.teacher_train_dir is not None:
-                aaa = torch.clamp(aaa, max=5.0) / 5.0
-                bbb = torch.clamp(bbb, max=5.0) / 5.0
-                ccc = torch.clamp(ccc, max=5.0) / 5.0
-                ddd = torch.clamp(ddd, max=5.0) / 5.0
 
             # Reshape back to 4D [num_bins, 2, H, W] so we can safely manipulate Time
             voxel_tensor = voxel_transformed_flat.view(self.num_bins, 2, 256, 256)
 
-            # ---> NEW: Temporal Reversal Augmentation <---
+            # ---> Temporal Reversal Augmentation <---
             if (not self.is_fine_tune) and (random.random() > 0.5):
                 # Time is dim=0, Polarity is dim=1 at this stage - [num_bins, 2, H, W]
                 # We must flip BOTH to maintain true event camera physics!
                 voxel_tensor = torch.flip(voxel_tensor, dims=[0, 1])
-                
-                if self.teacher_train_dir is not None:
-                    # For aaa, bbb, ccc, ddd, Time is dim=0 [Bins, H, W]
-                    temp_aaa = torch.flip(ddd, dims=[0])
-                    temp_bbb = torch.flip(ccc, dims=[0])
-                    temp_ccc = torch.flip(bbb, dims=[0])
-                    temp_ddd = torch.flip(aaa, dims=[0])
-                    aaa, bbb, ccc, ddd = temp_aaa, temp_bbb, temp_ccc, temp_ddd
                 
                 # Swap the photometric target images
                 temp_gray = gray_f_final
@@ -194,28 +123,13 @@ class DatasetTrain(Dataset):
 
             # Move Time to the last dimension for the SNN [2, 256, 256, num_bins]
             voxel_tensor = voxel_tensor.permute(1, 2, 3, 0)
-            
-            if self.teacher_train_dir is not None:
-                # Move Time to last dimension [H, W, Bins]
-                aaa = aaa.permute(1, 2, 0)
-                bbb = bbb.permute(1, 2, 0)
-                ccc = ccc.permute(1, 2, 0)
-                ddd = ddd.permute(1, 2, 0)
 
             # Final Return
-            if self.teacher_train_dir is not None:
-                if torch.max(voxel_tensor) > 0 and torch.max(aaa) > 0 and torch.max(bbb) > 0 and torch.max(ccc) > 0 and torch.max(ddd) > 0 and torch.max(gray_f_final) > 0 and torch.max(gray_l_final) > 0:
-                    return voxel_tensor, aaa, bbb, ccc, ddd, gray_f_final, gray_l_final
-                else:
-                    return voxel_0, event_0, event_0, event_0, event_0, gray_0, gray_0
+            if torch.max(voxel_tensor) > 0 and torch.max(gray_f_final) > 0 and torch.max(gray_l_final) > 0:
+                return voxel_tensor, gray_f_final, gray_l_final
             else:
-                if torch.max(voxel_tensor) > 0 and torch.max(gray_f_final) > 0 and torch.max(gray_l_final) > 0:
-                    return voxel_tensor, gray_f_final, gray_l_final
-                else:
-                    return voxel_0, gray_0, gray_0
+                return voxel_0, gray_0, gray_0
         else:
-            if self.teacher_train_dir is not None:
-                return voxel_0, event_0, event_0, event_0, event_0, gray_0, gray_0
             return voxel_0, gray_0, gray_0
 
     def __len__(self):
