@@ -78,9 +78,6 @@ parser.add_argument('--save_thred', type=float, default=1.05, help='threashold f
 parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
                     help='Host environment to determine dataset paths')
 
-parser.add_argument('--kd_strategy', default='top_scale', choices=['multi_scale', 'top_scale'],
-                    help='Knowledge Distillation strategy: multi_scale (all scales), or top_scale (only highest resolution)')
-
 args = parser.parse_args()
 
 # Initializations
@@ -107,7 +104,7 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
 uzh_fpv_dataset_path = f'{base_dir}/dataset/Event/uzh-fpv/data/'
 
-save_dir = f'{base_dir}/outputs/let_flownet_voxel_multiscale_dt{args.dt}_output'
+save_dir = f'{base_dir}/outputs/let_flownet_voxel_multiscale_ilif_edc_loss_dt{args.dt}_output'
 
 arch = "let_flownet_voxel"
 
@@ -170,26 +167,19 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             flow_preds_fp32 = [f.float() for f in flow_predictions]
 
             event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
-            
-            if args.kd_strategy == 'top_scale':
-                flow_preds_for_loss = [flow_preds_fp32[-1]]
-                weights_for_loss = [1.0]
-            else:
-                flow_preds_for_loss = flow_preds_fp32
-                weights_for_loss = multiscale_weights
 
             photometric_loss = photometric_loss_multiscale(
                 former_gray[:, 0, :, :].to(device).float(), 
                 latter_gray[:, 0, :, :].to(device).float(), 
                 event_mask, 
-                flow_preds_for_loss, 
+                flow_preds_fp32, 
                 device, 
                 print_details, 
-                weights=weights_for_loss
+                weights=multiscale_weights
             )
 
             # Smoothness loss
-            smoothness_loss = smooth_loss(flow_preds_for_loss)
+            smoothness_loss = smooth_loss(flow_preds_fp32)
 
             # total_loss
             loss = photometric_loss + smoothness_loss
