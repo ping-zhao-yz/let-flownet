@@ -33,7 +33,10 @@ def backward_warp(x, flo):
         # Rigid-body transformation: v_x, v_y, omega
         v_x = flo[:, 0:1, :, :]
         v_y = flo[:, 1:2, :, :]
-        omega = flo[:, 2:3, :, :]
+
+        # Scale the raw network output by 0.1 to balance the gradients.
+        # Using tanh strictly bounds the maximum rotation to +/- 0.1 radians (~5.7 degrees)
+        omega = torch.tanh(flo[:, 2:3, :, :]) * 0.1
 
         # Center coordinates for rotation
         cx, cy = (W - 1) / 2.0, (H - 1) / 2.0
