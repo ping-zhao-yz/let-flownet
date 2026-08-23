@@ -515,7 +515,6 @@ def main():
             args.dt,
             train_src_file,
             transform=co_transform,
-            is_fine_tune=args.train_env=='outdoor_day2',
             num_bins=args.num_bins
         )
         train_loader = DataLoader(
