@@ -19,13 +19,6 @@ dist/
 # Package files
 *.jar
 
-spike_flownet_output/
-spikeflownet/
-
-let-flownet-env-logs/
-let-flownet-env-outputs/
-design/
-
 __pycache__/
 .pytest_cache/
 
@@ -62,3 +55,12 @@ Thumbs.db
 
 # Checkpoint file
 *.tar
+
+spike_flownet_output/
+spikeflownet/
+
+let-flownet-env-logs/
+let-flownet-env-outputs/
+design/
+
+training-pipeline.txt

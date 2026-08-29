@@ -62,7 +62,7 @@ parser.add_argument('--sp_threshold', type=float, default=0.75, choices=[0.75, 0
 
 parser.add_argument('--num_bins', type=int, default=10, help='number of temporal bins for voxel grid')
 
-parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-fpv'],
+parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-fpv', 'dsec'],
                     help='dataset for training')
 
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
@@ -93,16 +93,21 @@ if args.train_host == 'local':
 else:
     base_dir = '/scratch/let-flownet'
 
-src_file_dir = f'{base_dir}/dataset/Event/mvsec/original'
+uzh_fpv_dataset_path = f'{base_dir}/dataset/Event/uzh-fpv/data/'
+dsec_dir = f'{base_dir}/dataset/Event/dsec/data/'
 
 train_env = args.train_env
 test_env = args.test_env
 
-train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
-test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
-test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
+if args.train_dataset == 'dsec':
+    pass # Training and testing dataset paths for DSEC are handled dynamically in main()
+else:
+    # UZH-FPV and MVSEC share the same validation dataset; UZH-FPV doesn't use training dataset configuration here, same as DSEC
+    src_file_dir = f'{base_dir}/dataset/Event/mvsec/original'
+    train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
+    test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
+    test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
-uzh_fpv_dataset_path = f'{base_dir}/dataset/Event/uzh-fpv/data/'
 
 save_dir = f'{base_dir}/outputs/let_flownet_voxel_multiscale_ilif_edc_loss_dt{args.dt}_output'
 
@@ -217,14 +222,14 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     return losses.avg
 
 
-def validate(test_loader, model, epoch, output_writers):
+def validate(test_loader, model, epoch, output_writers, current_test_src_file, current_test_gt_file):
     global args, image_resize, sp_threshold
-    d_label = h5py.File(test_gt_file, 'r')
+    d_label = h5py.File(current_test_gt_file, 'r')
     gt_temp = np.float32(d_label['davis']['left']['flow_dist'])
     gt_ts_temp = np.float64(d_label['davis']['left']['flow_dist_ts'])
     d_label = None
 
-    d_set = h5py.File(test_src_file, 'r')
+    d_set = h5py.File(current_test_src_file, 'r')
     gray_image = d_set['davis']['left']['image_raw']
 
     # switch to evaluate mode
@@ -325,13 +330,16 @@ def validate(test_loader, model, epoch, output_writers):
                 cv2.imshow('Masked Predicted Flow', cv2.cvtColor(
                     rgb_flow_masked, cv2.COLOR_BGR2RGB))
 
-                gt_flow_cropped = gt_flow[2: -2, 45: -45]
-                gt_flow_x_masked = cv2.resize(
-                    gt_flow_cropped[:, :, 0] * mask_temp_np, (scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
-                gt_flow_y_masked = cv2.resize(
-                    gt_flow_cropped[:, :, 1] * mask_temp_np, (scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
+                # Calculate dynamic center offset for visualization crop to match network input exactly
+                xoff_vis = max(0, (gt_flow.shape[1] - image_resize) // 2)
+                yoff_vis = max(0, (gt_flow.shape[0] - image_resize) // 2)
+                gt_flow_cropped = gt_flow[yoff_vis : yoff_vis + image_resize, xoff_vis : xoff_vis + image_resize, :]
+                
+                gt_flow_x_masked = gt_flow_cropped[:, :, 0] * mask_temp_np
+                gt_flow_y_masked = gt_flow_cropped[:, :, 1] * mask_temp_np
                 gt_flow_large_masked = flow_viz_np(
-                    gt_flow_x_masked, gt_flow_y_masked)
+                    cv2.resize(gt_flow_x_masked, (scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR),
+                    cv2.resize(gt_flow_y_masked, (scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR))
                 cv2.imshow('Masked GT Flow', cv2.cvtColor(
                     gt_flow_large_masked, cv2.COLOR_BGR2RGB))
 
@@ -343,10 +351,10 @@ def validate(test_loader, model, epoch, output_writers):
             ycrop = image_size[0]
             xsize = full_size[1]
             ysize = full_size[0]
-            xoff = (xsize - xcrop) // 2
-            yoff = (ysize - ycrop) // 2
+            xoff = max(0, (xsize - xcrop) // 2)
+            yoff = max(0, (ysize - ycrop) // 2)
 
-            gt_flow = gt_flow[yoff: -yoff, xoff: -xoff, :]
+            gt_flow = gt_flow[yoff : yoff + ycrop, xoff : xoff + xcrop, :]
 
             is_car_flag = 'outdoor' in test_env
 
@@ -393,9 +401,27 @@ def main():
     best_EPE = -1
     val_fail_times = 0
 
-    d_label = h5py.File(test_gt_file, 'r')
-    gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
-    d_label.close()
+    test_file_pairs = []
+    if args.train_dataset == 'dsec':
+        test_envs = ['zurich_city_05_b', 'zurich_city_06_a', 'zurich_city_10_b', 'zurich_city_11_c']
+        for t_env in test_envs:
+            test_file_pairs.append((
+                os.path.join(dsec_dir, f"{t_env}_data.hdf5"),
+                os.path.join(dsec_dir, f"{t_env}_gt.hdf5")
+            ))
+    else:
+        test_file_pairs.append((test_src_file, test_gt_file))
+
+    test_loaders = []
+    for t_src, t_gt in test_file_pairs:
+        with h5py.File(t_gt, 'r') as d_label:
+            gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
+            
+        t_dataset = DatasetTest(args.dt, t_src, gt_start_time=gt_start, num_bins=args.num_bins)
+        t_loader = DataLoader(dataset=t_dataset, batch_size=1, shuffle=False, num_workers=workers)
+        test_loaders.append((t_loader, t_src, t_gt))
+        
+    print(f"=> Created {len(test_loaders)} validation loader(s) for {args.train_dataset.upper()}.")
 
     save_path = '{},bat{},lr{},bin{}'.format(
         arch,
@@ -415,12 +441,6 @@ def main():
     for i in range(3):
         output_writers.append(SummaryWriter(
             os.path.join(save_path, 'test', str(i))))
-
-    test_dataset = DatasetTest(args.dt, test_src_file, gt_start_time=gt_start, num_bins=args.num_bins)
-    test_loader = DataLoader(dataset=test_dataset,
-                             batch_size=1,
-                             shuffle=False,
-                             num_workers=workers)
 
     # create model
     if args.pretrained:
@@ -445,7 +465,10 @@ def main():
 
     if args.evaluate:
         with torch.no_grad():
-            best_EPE = validate(test_loader, model, -1, output_writers)
+            total_EPE = 0
+            for t_loader, t_src, t_gt in test_loaders:
+                total_EPE += validate(t_loader, model, -1, output_writers, t_src, t_gt)
+            best_EPE = total_EPE / len(test_loaders)
         return
 
     assert (args.solver in ['adam', 'sgd'])
@@ -503,14 +526,43 @@ def main():
 
     # Use strict rigid transformations to preserve SNN spike density and physical scaling
     co_transform = transforms.Compose([
-        transforms.RandomCrop((256, 256)),
         transforms.RandomHorizontalFlip(0.5),
         transforms.RandomVerticalFlip(0.5)
     ])
 
-    assert (args.train_dataset in ['mvsec', 'uzh-fpv'])
+    assert (args.train_dataset in ['mvsec', 'uzh-fpv', 'dsec'])
 
-    if args.train_dataset == 'mvsec':
+    if args.train_dataset == 'dsec':
+        import glob
+        dsec_files = glob.glob(os.path.join(dsec_dir, "*_data.hdf5"))
+        
+        # SOTA Protocol: Exclude these from training to act as the local test split
+        hold_outs = ['zurich_city_05_b', 'zurich_city_06_a', 'zurich_city_10_b', 'zurich_city_11_c']
+        
+        train_loader = []
+        for dataset_path in dsec_files:
+            # Skip if the file is one of the designated validation hold-outs
+            if any(val_seq in dataset_path for val_seq in hold_outs):
+                continue
+                
+            print(f"Loading DSEC Train dataset {dataset_path}...")
+            single_dataset = DatasetTrain(
+                args.dt, 
+                dataset_path, 
+                transform=co_transform, 
+                num_bins=args.num_bins
+            )
+            single_loader = DataLoader(
+                dataset=single_dataset, 
+                batch_size=batch_size, 
+                shuffle=True, 
+                num_workers=workers, 
+                pin_memory=True, 
+                drop_last=True
+            )
+            train_loader.append(single_loader)
+
+    elif args.train_dataset == 'mvsec':
         train_datasets = DatasetTrain(
             args.dt,
             train_src_file,
@@ -565,8 +617,8 @@ def main():
         current_lr = optimizer.param_groups[0]['lr']
         print(f"Learning Rate: {current_lr:.6f}")
 
-        if args.train_dataset == 'uzh-fpv':
-            # Shuffle the order we read the 9 HDF5 files every epoch
+        if args.train_dataset in ['uzh-fpv', 'dsec']:
+            # Shuffle the order we read the HDF5 sequence files every epoch
             random.shuffle(train_loader)
             
             epoch_loss = 0
@@ -591,7 +643,10 @@ def main():
         if (epoch + 1) % args.eval_int == 0:
             # evaluate on validation set
             with torch.no_grad():
-                EPE = validate(test_loader, model, epoch, output_writers)
+                total_EPE = 0
+                for t_loader, t_src, t_gt in test_loaders:
+                    total_EPE += validate(t_loader, model, epoch, output_writers, t_src, t_gt)
+                EPE = total_EPE / len(test_loaders)
             test_writer.add_scalar('mean_val_EPE', EPE, epoch)
 
             if best_EPE < 0:

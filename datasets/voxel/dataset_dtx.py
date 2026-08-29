@@ -5,7 +5,7 @@ import random
 from torch.utils.data import Dataset
 from datasets.voxel.voxel_grid import events_to_voxel_grid
 
-def get_raw_events_for_window(dataset_file, index, dt, xoff=45, yoff=2, orig_w=346, orig_h=260):
+def get_raw_events_for_window(dataset_file, index, dt, xoff, yoff, orig_w, orig_h):
     with h5py.File(dataset_file, 'r') as d_set:
         event_inds = d_set['davis']['left']['image_raw_event_inds']
         if index + dt >= len(event_inds):
@@ -54,8 +54,21 @@ class DatasetTrain(Dataset):
         gray_0 = torch.zeros(1, 256, 256)
 
         if index + 100 < self.length and index > 100:
-            # 1. Fetch raw events using the helper function
-            events_packed = get_raw_events_for_window(self.dataset_file, index, self.dt)
+            # Fetch gray images first to dynamically extract orig_h, orig_w
+            with h5py.File(self.dataset_file, 'r') as d_set:
+                gray_f_raw = d_set['davis']['left']['image_raw'][index]
+                gray_l_raw = d_set['davis']['left']['image_raw'][index + self.dt]
+            gray_f = np.uint8(gray_f_raw)
+            gray_l = np.uint8(gray_l_raw)
+            
+            orig_h, orig_w = gray_f.shape
+            
+            # Generate dynamic random offsets for spatial augmentation
+            xoff = random.randint(0, max(0, orig_w - 256))
+            yoff = random.randint(0, max(0, orig_h - 256))
+
+            # 1. Fetch raw events using the exact dynamic random crop
+            events_packed = get_raw_events_for_window(self.dataset_file, index, self.dt, xoff, yoff, orig_w, orig_h)
 
             # Handle empty windows
             if events_packed is None or len(events_packed) == 0:
@@ -70,20 +83,12 @@ class DatasetTrain(Dataset):
                 device=torch.device('cpu')
             )
 
-            # Fetch gray images
-            with h5py.File(self.dataset_file, 'r') as d_set:
-                gray_f_raw = d_set['davis']['left']['image_raw'][index]
-                gray_l_raw = d_set['davis']['left']['image_raw'][index + self.dt]
-            gray_f = np.uint8(gray_f_raw)
-            gray_l = np.uint8(gray_l_raw)
-
             # Flatten the 4D tensor to 3D for concatenation
             voxel_flat = voxel_tensor.view(2 * self.num_bins, 256, 256)
             
-            # Keep images on CPU
-            if gray_f.shape == (260, 346):
-                gray_f = gray_f[2:258, 45:301]
-                gray_l = gray_l[2:258, 45:301]
+            # Crop images dynamically using the exact same offsets
+            gray_f = gray_f[yoff:yoff+256, xoff:xoff+256]
+            gray_l = gray_l[yoff:yoff+256, xoff:xoff+256]
             
             gray_f_t = torch.from_numpy(gray_f).float().unsqueeze(0)
             gray_l_t = torch.from_numpy(gray_l).float().unsqueeze(0)
@@ -144,7 +149,12 @@ class DatasetTest(Dataset):
 
         with h5py.File(dataset_file, 'r') as d_set:
             self.gray_image_ts = np.float64(d_set['davis']['left']['image_raw_ts'])
-            self.length = d_set['davis']['left']['image_raw'].shape[0]
+            image_shape = d_set['davis']['left']['image_raw'].shape
+            self.length = image_shape[0]
+            if len(image_shape) >= 3:
+                self.orig_h, self.orig_w = image_shape[1], image_shape[2]
+            else:
+                self.orig_h, self.orig_w = 260, 346
 
     def __getitem__(self, index):
         voxel_0 = torch.zeros(2, 256, 256, self.num_bins)
@@ -157,8 +167,10 @@ class DatasetTest(Dataset):
             return voxel_0, ts_f, ts_l
 
         if (index + 20 < self.length) and (index > 20):
-            # 1. Fetch raw events using the helper function
-            events_packed = get_raw_events_for_window(self.dataset_file, index, self.dt)
+            # 1. Fetch raw events using strict mathematical center crop
+            xoff = max(0, (self.orig_w - 256) // 2)
+            yoff = max(0, (self.orig_h - 256) // 2)
+            events_packed = get_raw_events_for_window(self.dataset_file, index, self.dt, xoff, yoff, self.orig_w, self.orig_h)
             
             # Handle empty windows
             if events_packed is None or len(events_packed) == 0:
