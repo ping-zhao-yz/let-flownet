@@ -26,9 +26,9 @@ def get_raw_events_for_window(dataset_file, index, dt, xoff, yoff, orig_w, orig_
     events_p = events[:, 3].astype(np.float32)
     events_p = 2*events_p - 1
 
-    # Spatial cropping
-    mask = (events_x >= xoff) & (events_x < orig_w - xoff) & (events_y >= yoff) & (events_y < orig_h - yoff)
-    
+    # Spatial cropping (Strict 256x256 window)
+    mask = (events_x >= xoff) & (events_x < xoff + 256) & (events_y >= yoff) & (events_y < yoff + 256)
+
     events_packed = np.stack([
         events_t[mask],
         events_x[mask] - xoff,
