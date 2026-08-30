@@ -45,7 +45,7 @@ def smooth_loss_single(flow):
     return loss
 
 """
-Calculates per pixel flow error between flow_pred and flow_gt. event_img is used to mask out any pixels without events
+DEPRECATED: Calculates per pixel flow error between flow_pred and flow_gt. event_img is used to mask out any pixels without events
 """
 def flow_error_dense(flow_gt, flow_pred, event_img, is_car=False):
     max_row = flow_gt.shape[1]
@@ -99,6 +99,64 @@ def flow_error_dense(flow_gt, flow_pred, event_img, is_car=False):
         AEE_sum_temp_gt = torch.sum(EE_gt)
 
     return AEE, percent_Outlier, n_points, AEE_sum_temp, AEE_gt, AEE_sum_temp_gt
+
+"""
+DSEC benchmark metrics (new)
+"""
+def flow_error_dense_dsec(gt_flow, pred_flow, mask_tensor, is_car=False):
+    """
+    Calculates standard DSEC benchmark metrics (backwards compatible with MVSEC).
+    gt_flow: [H, W, 2] numpy array
+    pred_flow: [H, W, 2] numpy array
+    mask_tensor: [H, W] boolean array of valid pixels
+    """
+    max_row = gt_flow.shape[0]
+    if is_car:
+        max_row = 190
+
+    gt_flow_cropped = gt_flow[:max_row, :]
+    pred_flow_cropped = pred_flow[:max_row, :]
+    mask_tensor_cropped = mask_tensor[:max_row, :]
+
+    # Only compute error over points that are valid in the GT (not inf or 0).
+    flow_mask = np.logical_and(
+        np.logical_and(
+            ~np.isinf(gt_flow_cropped[:, :, 0]), ~np.isinf(gt_flow_cropped[:, :, 1])
+        ),
+        np.linalg.norm(gt_flow_cropped, axis=2) > 0,
+    )
+    total_mask = np.logical_and(mask_tensor_cropped, flow_mask)
+
+    # Isolate valid pixels using the combined mask
+    gt_u = gt_flow_cropped[:, :, 0][total_mask]
+    gt_v = gt_flow_cropped[:, :, 1][total_mask]
+    pred_u = pred_flow_cropped[:, :, 0][total_mask]
+    pred_v = pred_flow_cropped[:, :, 1][total_mask]
+
+    n_points = len(gt_u)
+    if n_points == 0:
+        return 0., 0., 0., 0., 0., 0
+
+    # 1. EPE (Endpoint Error)
+    epe = np.sqrt((pred_u - gt_u)**2 + (pred_v - gt_v)**2)
+    mean_epe = np.mean(epe)
+
+    # 2. AE (Angular Error)
+    dot_product = (pred_u * gt_u) + (pred_v * gt_v) + 1.0
+    norm_pred = np.sqrt(pred_u**2 + pred_v**2 + 1.0)
+    norm_gt = np.sqrt(gt_u**2 + gt_v**2 + 1.0)
+    
+    # Clip to prevent NaN errors in arccos due to floating point precision limits
+    cos_theta = np.clip(dot_product / (norm_pred * norm_gt), -1.0, 1.0)
+    ae = np.arccos(cos_theta) * (180.0 / np.pi)
+    mean_ae = np.mean(ae)
+
+    # 3. 1PE, 2PE, 3PE (Outlier Percentages)
+    pe1 = np.mean(epe > 1.0) * 100
+    pe2 = np.mean(epe > 2.0) * 100
+    pe3 = np.mean(epe > 3.0) * 100
+
+    return mean_epe, mean_ae, pe1, pe2, pe3, n_points
 
 
 """Propagates x_indices and y_indices by their flow, as defined in x_flow, y_flow. x_mask and y_mask are zeroed out at each pixel where the indices leave the image.

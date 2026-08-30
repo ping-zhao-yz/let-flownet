@@ -20,8 +20,8 @@ from util.loss_util import AverageMeter
 from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
 from datasets.voxel.dataset_dtx import DatasetTest, DatasetTrain
-from models import let_flownet_voxel, let_flownet_evtcount
-from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense, smooth_loss
+from models import let_flownet_voxel
+from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense_dsec, smooth_loss
 from loss.photometric_loss_backward import photometric_loss_multiscale
 import torch.nn as nn
 import torch.nn.functional as F
@@ -235,12 +235,12 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
     # switch to evaluate mode
     model.eval()
 
-    AEE_sum = 0.
-    AEE_sum_sum = 0.
-    AEE_sum_gt = 0.
-    AEE_sum_sum_gt = 0.
+    epe_sum = 0.
+    ae_sum = 0.
+    pe1_sum = 0.
+    pe2_sum = 0.
+    pe3_sum = 0.
     total_points = 0.
-    percent_Outlier_sum = 0.
     iters = 0.
     scale = 1
 
@@ -358,16 +358,13 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
 
             is_car_flag = 'outdoor' in test_env
 
-            AEE, percent_Outlier, n_points, AEE_sum_temp, AEE_gt, AEE_sum_temp_gt = flow_error_dense(
-                gt_flow, pred_flow, mask_tensor, is_car=is_car_flag)
+            epe, ae, pe1, pe2, pe3, n_points = flow_error_dense_dsec(gt_flow, pred_flow, mask_temp_np, is_car=is_car_flag)
 
-            AEE_sum = AEE_sum + div_flow * AEE
-            AEE_sum_sum = AEE_sum_sum + AEE_sum_temp
-
-            AEE_sum_gt = AEE_sum_gt + div_flow * AEE_gt
-            AEE_sum_sum_gt = AEE_sum_sum_gt + AEE_sum_temp_gt
-
-            percent_Outlier_sum += percent_Outlier
+            epe_sum += epe
+            ae_sum += ae
+            pe1_sum += pe1
+            pe2_sum += pe2
+            pe3_sum += pe3
             total_points += n_points
 
             if i_batch < len(output_writers):  # log first output of first batches
@@ -382,16 +379,16 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
             if i_batch % print_freq == 0:
                 print('-------------------------------------------------------')
                 print(f'Time: {now}, i_batch: [{i_batch}/{len(test_loader)}]')
-                print('Mean AEE: {:.3f}, sum AEE: {:.2f}, Mean AEE_gt: {:.2f}, sum AEE_gt: {:.2f}, Mean %Outlier: {:.3f}, # pts: {:.2f}'
-                    .format(AEE_sum / iters, AEE_sum_sum / iters, AEE_sum_gt / iters, AEE_sum_sum_gt / iters, percent_Outlier_sum / iters, n_points))
+                print('Mean EPE: {:.3f}, Mean AE: {:.3f}°, 1PE: {:.2f}%, 2PE: {:.2f}%, 3PE: {:.2f}%, # pts: {:.2f}'
+                    .format(epe_sum / iters, ae_sum / iters, pe1_sum / iters, pe2_sum / iters, pe3_sum / iters, n_points))
 
     print('================ Overall Validation Outcome ===================')
     print(f'Time: {now}, epoch: {epoch}')
-    print('Mean AEE: {:.3f}, sum AEE: {:.2f}, Mean AEE_gt: {:.2f}, sum AEE_gt: {:.2f}, Mean %Outlier: {:.3f}, # Mean pts: {:.2f}'
-        .format(AEE_sum / iters, AEE_sum_sum / iters, AEE_sum_gt / iters, AEE_sum_sum_gt / iters, percent_Outlier_sum / iters, total_points / iters))
+    print('Mean EPE: {:.3f}, Mean AE: {:.3f}°, 1PE: {:.2f}%, 2PE: {:.2f}%, 3PE: {:.2f}%, # Mean pts: {:.2f}'
+        .format(epe_sum / iters, ae_sum / iters, pe1_sum / iters, pe2_sum / iters, pe3_sum / iters, total_points / iters))
     print('===============================================================')
 
-    return AEE_sum / iters
+    return epe_sum / iters
 
 
 def main():
