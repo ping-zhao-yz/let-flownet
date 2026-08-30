@@ -65,7 +65,7 @@ parser.add_argument('--num_bins', type=int, default=10, help='number of temporal
 parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-fpv', 'dsec'],
                     help='dataset for training')
 
-parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
+parser.add_argument('--train_env', default='outdoor_day1', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
 
 parser.add_argument('--lr', type=float, default=1e-5, help='learning rate')
