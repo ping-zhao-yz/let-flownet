@@ -65,6 +65,9 @@ parser.add_argument('--num_bins', type=int, default=10, help='number of temporal
 parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-fpv', 'dsec'],
                     help='dataset for training')
 
+parser.add_argument('--dsec_train_dir', default='/media/pzha9599/Software/dataset/dsec/train', help='Path to DSEC training data')
+parser.add_argument('--dsec_test_dir', default='/media/windows_data/code/research/dataset/Event/dsec/test', help='Path to DSEC testing data')
+
 parser.add_argument('--train_env', default='outdoor_day1', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
 
@@ -94,7 +97,6 @@ else:
     base_dir = '/scratch/let-flownet'
 
 uzh_fpv_dataset_path = f'{base_dir}/dataset/Event/uzh-fpv/data/'
-dsec_dir = f'{base_dir}/dataset/Event/dsec/data/'
 
 train_env = args.train_env
 test_env = args.test_env
@@ -403,8 +405,8 @@ def main():
         test_envs = ['zurich_city_05_b', 'zurich_city_06_a', 'zurich_city_10_b', 'zurich_city_11_c']
         for t_env in test_envs:
             test_file_pairs.append((
-                os.path.join(dsec_dir, f"{t_env}_data.hdf5"),
-                os.path.join(dsec_dir, f"{t_env}_gt.hdf5")
+                os.path.join(args.dsec_test_dir, f"{t_env}_data.hdf5"),
+                os.path.join(args.dsec_test_dir, f"{t_env}_gt.hdf5")
             ))
     else:
         test_file_pairs.append((test_src_file, test_gt_file))
@@ -531,7 +533,7 @@ def main():
 
     if args.train_dataset == 'dsec':
         import glob
-        dsec_files = glob.glob(os.path.join(dsec_dir, "*_data.hdf5"))
+        dsec_files = glob.glob(os.path.join(args.dsec_train_dir, "*_data.hdf5"))
         
         # SOTA Protocol: Exclude these from training to act as the local test split
         hold_outs = ['zurich_city_05_b', 'zurich_city_06_a', 'zurich_city_10_b', 'zurich_city_11_c']
