@@ -417,7 +417,13 @@ def main():
             gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
             
         t_dataset = DatasetTest(args.dt, t_src, gt_start_time=gt_start, num_bins=args.num_bins)
-        t_loader = DataLoader(dataset=t_dataset, batch_size=1, shuffle=False, num_workers=workers)
+        t_loader = DataLoader(
+            dataset=t_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=workers,
+            multiprocessing_context='spawn'
+        )
         test_loaders.append((t_loader, t_src, t_gt))
         
     print(f"=> Created {len(test_loaders)} validation loader(s) for {args.train_dataset.upper()}.")
@@ -557,7 +563,8 @@ def main():
                 shuffle=True, 
                 num_workers=workers, 
                 pin_memory=True, 
-                drop_last=True
+                drop_last=True,
+                multiprocessing_context='spawn'
             )
             train_loader.append(single_loader)
 
@@ -572,7 +579,8 @@ def main():
             dataset=train_datasets,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=workers
+            num_workers=workers,
+            multiprocessing_context='spawn'
         )
     elif args.train_dataset == 'uzh-fpv':
         uzh_datasets = [
@@ -604,7 +612,8 @@ def main():
                 shuffle=True, 
                 num_workers=workers, 
                 pin_memory=True, 
-                drop_last=True
+                drop_last=True,
+                multiprocessing_context='spawn'
             )
             train_loader.append(single_loader)
 
