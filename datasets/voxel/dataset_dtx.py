@@ -6,16 +6,20 @@ from torch.utils.data import Dataset
 from datasets.voxel.voxel_grid import events_to_voxel_grid
 
 def get_raw_events_for_window(d_set, index, dt, xoff, yoff, orig_w, orig_h):
-    event_inds = d_set['davis']['left']['image_raw_event_inds']
-    if index + dt >= len(event_inds):
+    try:
+        event_inds = d_set['davis']['left']['image_raw_event_inds']
+        if index + dt >= len(event_inds):
+            return None
+            
+        start_idx = event_inds[index]
+        end_idx = event_inds[index + dt]
+        if start_idx >= end_idx:
+            return None
+            
+        events = d_set['davis']['left']['events'][start_idx:end_idx]
+    except OSError:
+        print(f"WARNING: HDF5 event read failed at index {index} (corrupted chunk or concurrency).")
         return None
-        
-    start_idx = event_inds[index]
-    end_idx = event_inds[index + dt]
-    if start_idx >= end_idx:
-        return None
-        
-    events = d_set['davis']['left']['events'][start_idx:end_idx]
 
     # Map to [N, 4] where: 0=t, 1=x, 2=y, 3=p
     # Based testing, raw data is [x, y, t, p]
@@ -58,12 +62,17 @@ class DatasetTrain(Dataset):
 
         if index + 100 < self.length and index > 100:
             # Fetch gray images first to dynamically extract orig_h, orig_w
-            gray_f_raw = self.d_set['davis']['left']['image_raw'][index]
-            gray_l_raw = self.d_set['davis']['left']['image_raw'][index + self.dt]
-            gray_f = np.uint8(gray_f_raw)
-            gray_l = np.uint8(gray_l_raw)
+            try:
+                gray_f_raw = self.d_set['davis']['left']['image_raw'][index]
+                gray_l_raw = self.d_set['davis']['left']['image_raw'][index + self.dt]
+            except OSError:
+                print(f"WARNING: HDF5 image read failed at index {index}. Skipping sample.")
+                return voxel_0, gray_0, gray_0
+                
+            gray_f = np.squeeze(np.asarray(gray_f_raw, dtype=np.uint8))
+            gray_l = np.squeeze(np.asarray(gray_l_raw, dtype=np.uint8))
             
-            orig_h, orig_w = gray_f.shape
+            orig_h, orig_w = gray_f.shape[0], gray_f.shape[1]
             
             # Generate dynamic random offsets for spatial augmentation
             xoff = random.randint(0, max(0, orig_w - 256))
