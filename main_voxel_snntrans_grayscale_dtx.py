@@ -82,10 +82,7 @@ parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
                     help='Host environment to determine dataset paths')
 
 args = parser.parse_args()
-
-# Initializations
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"=> using device '{device}'")
 
 image_resize = 256
 sp_threshold = args.sp_threshold
@@ -395,6 +392,8 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
 
 def main():
     global args
+    # Initializations
+    print(f"=> using device '{device}'")
 
     workers = 8
     best_EPE = -1
