@@ -5,18 +5,17 @@ import random
 from torch.utils.data import Dataset
 from datasets.voxel.voxel_grid import events_to_voxel_grid
 
-def get_raw_events_for_window(dataset_file, index, dt, xoff, yoff, orig_w, orig_h):
-    with h5py.File(dataset_file, 'r') as d_set:
-        event_inds = d_set['davis']['left']['image_raw_event_inds']
-        if index + dt >= len(event_inds):
-            return None
-            
-        start_idx = event_inds[index]
-        end_idx = event_inds[index + dt]
-        if start_idx >= end_idx:
-            return None
-            
-        events = d_set['davis']['left']['events'][start_idx:end_idx]
+def get_raw_events_for_window(d_set, index, dt, xoff, yoff, orig_w, orig_h):
+    event_inds = d_set['davis']['left']['image_raw_event_inds']
+    if index + dt >= len(event_inds):
+        return None
+        
+    start_idx = event_inds[index]
+    end_idx = event_inds[index + dt]
+    if start_idx >= end_idx:
+        return None
+        
+    events = d_set['davis']['left']['events'][start_idx:end_idx]
 
     # Map to [N, 4] where: 0=t, 1=x, 2=y, 3=p
     # Based testing, raw data is [x, y, t, p]
@@ -44,20 +43,23 @@ class DatasetTrain(Dataset):
         self.dataset_file = dataset_file
         self.transform = transform
         self.num_bins = num_bins
+        self.d_set = None
 
         with h5py.File(dataset_file, 'r') as d_set:
             self.length = d_set['davis']['left']['image_raw'].shape[0]
 
     def __getitem__(self, index):
+        if self.d_set is None:
+            self.d_set = h5py.File(self.dataset_file, 'r')
+
         # 1. Update the shape to match our new 2-channel grid (Keep it on CPU)
         voxel_0 = torch.zeros(2, 256, 256, self.num_bins)
         gray_0 = torch.zeros(1, 256, 256)
 
         if index + 100 < self.length and index > 100:
             # Fetch gray images first to dynamically extract orig_h, orig_w
-            with h5py.File(self.dataset_file, 'r') as d_set:
-                gray_f_raw = d_set['davis']['left']['image_raw'][index]
-                gray_l_raw = d_set['davis']['left']['image_raw'][index + self.dt]
+            gray_f_raw = self.d_set['davis']['left']['image_raw'][index]
+            gray_l_raw = self.d_set['davis']['left']['image_raw'][index + self.dt]
             gray_f = np.uint8(gray_f_raw)
             gray_l = np.uint8(gray_l_raw)
             
@@ -68,7 +70,7 @@ class DatasetTrain(Dataset):
             yoff = random.randint(0, max(0, orig_h - 256))
 
             # 1. Fetch raw events using the exact dynamic random crop
-            events_packed = get_raw_events_for_window(self.dataset_file, index, self.dt, xoff, yoff, orig_w, orig_h)
+            events_packed = get_raw_events_for_window(self.d_set, index, self.dt, xoff, yoff, orig_w, orig_h)
 
             # Handle empty windows
             if events_packed is None or len(events_packed) == 0:
@@ -146,6 +148,7 @@ class DatasetTest(Dataset):
         self.num_bins = num_bins
         self.dataset_file = dataset_file
         self.gt_start_time = gt_start_time
+        self.d_set = None
 
         with h5py.File(dataset_file, 'r') as d_set:
             self.gray_image_ts = np.float64(d_set['davis']['left']['image_raw_ts'])
@@ -157,6 +160,9 @@ class DatasetTest(Dataset):
                 self.orig_h, self.orig_w = 260, 346
 
     def __getitem__(self, index):
+        if self.d_set is None:
+            self.d_set = h5py.File(self.dataset_file, 'r')
+
         voxel_0 = torch.zeros(2, 256, 256, self.num_bins)
         
         ts_f = self.gray_image_ts[index]
@@ -170,7 +176,7 @@ class DatasetTest(Dataset):
             # 1. Fetch raw events using strict mathematical center crop
             xoff = max(0, (self.orig_w - 256) // 2)
             yoff = max(0, (self.orig_h - 256) // 2)
-            events_packed = get_raw_events_for_window(self.dataset_file, index, self.dt, xoff, yoff, self.orig_w, self.orig_h)
+            events_packed = get_raw_events_for_window(self.d_set, index, self.dt, xoff, yoff, self.orig_w, self.orig_h)
             
             # Handle empty windows
             if events_packed is None or len(events_packed) == 0:
