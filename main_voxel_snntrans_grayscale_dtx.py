@@ -279,8 +279,14 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
             # Permute from [Channels, H, W] to [H, W, Channels] and convert to clean numpy
             pred_flow = output_resized[0, :2, :, :].permute(1, 2, 0).numpy()
 
-            u_gt_all = gt_temp[:, 0, :, :]
-            v_gt_all = gt_temp[:, 1, :, :]
+            u_gt_all = gt_temp[:, 0, :, :].copy()
+            v_gt_all = gt_temp[:, 1, :, :].copy()
+
+            # DSEC Parser stores invalid pixels (0 in 16-bit PNG) as -256.0.
+            # We must zero them out so the validity mask correctly ignores them.
+            invalid_mask = (u_gt_all == -256.0) & (v_gt_all == -256.0)
+            u_gt_all[invalid_mask] = 0.0
+            v_gt_all[invalid_mask] = 0.0
 
             u_gt, v_gt = estimate_corresponding_gt_flow(
                 u_gt_all, v_gt_all, gt_ts_temp, ts_f.numpy(), ts_l.numpy())
@@ -381,7 +387,9 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
                 print('Mean EPE: {:.3f}, Mean AE: {:.3f}°, 1PE: {:.2f}%, 2PE: {:.2f}%, 3PE: {:.2f}%, # pts: {:.2f}'
                     .format(epe_sum / iters, ae_sum / iters, pe1_sum / iters, pe2_sum / iters, pe3_sum / iters, n_points))
 
-    print('================ Overall Validation Outcome ===================')
+    seq_name = os.path.basename(current_test_src_file).replace('_data.hdf5', '')
+    
+    print(f'================ Validation Outcome: {seq_name} ===================')
     print(f'Time: {now}, epoch: {epoch}')
     print('Mean EPE: {:.3f}, Mean AE: {:.3f}°, 1PE: {:.2f}%, 2PE: {:.2f}%, 3PE: {:.2f}%, # Mean pts: {:.2f}'
         .format(epe_sum / iters, ae_sum / iters, pe1_sum / iters, pe2_sum / iters, pe3_sum / iters, total_points / iters))
@@ -472,7 +480,11 @@ def main():
             total_EPE = 0
             for t_loader, t_src, t_gt in test_loaders:
                 total_EPE += validate(t_loader, model, -1, output_writers, t_src, t_gt)
-            best_EPE = total_EPE / len(test_loaders)
+            mean_EPE = total_EPE / len(test_loaders)
+            if len(test_loaders) > 1:
+                print(f'================ Overall Validation Outcome ===================')
+                print(f'Mean EPE across all {len(test_loaders)} sequences: {mean_EPE:.3f}')
+                print('=============================================================')
         return
 
     assert (args.solver in ['adam', 'sgd'])
@@ -654,6 +666,11 @@ def main():
                 for t_loader, t_src, t_gt in test_loaders:
                     total_EPE += validate(t_loader, model, epoch, output_writers, t_src, t_gt)
                 EPE = total_EPE / len(test_loaders)
+            if len(test_loaders) > 1:
+                print(f'================ Overall Validation Outcome (Epoch {epoch}) ===================')
+                print(f'Mean EPE across all {len(test_loaders)} sequences: {EPE:.3f}')
+                print('=============================================================================')
+
             test_writer.add_scalar('mean_val_EPE', EPE, epoch)
 
             if best_EPE < 0:
