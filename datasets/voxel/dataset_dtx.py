@@ -340,10 +340,6 @@ class DatasetTrainDSEC_Supervised(Dataset):
             mask_t = torch.from_numpy(valid_mask).unsqueeze(0).float()
             
             voxel_tensor = torch.clamp(voxel_tensor, max=5.0) / 5.0
-            
-            # voxel_tensor is [2, 256, 256, num_bins] from events_to_voxel_grid
-            # Permute to [num_bins, 2, H, W] for easier augmentation along H/W
-            voxel_tensor = voxel_tensor.permute(3, 0, 1, 2)
 
             # --- Strict Vector-Aware Spatial Augmentation ---
             if random.random() > 0.5: # Horizontal Flip
