@@ -19,9 +19,9 @@ from torch.utils.data import DataLoader
 from util.loss_util import AverageMeter
 from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
-from datasets.voxel.dataset_dtx import DatasetTest, DatasetTrain
+from datasets.voxel.dataset_dtx import DatasetTest, DatasetTrain, DatasetTrainDSEC_Supervised
 from models import let_flownet_voxel
-from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense_dsec, smooth_loss
+from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense_dsec, smooth_loss, supervised_loss_multiscale
 from loss.photometric_loss_backward import photometric_loss_multiscale
 import torch.nn as nn
 import torch.nn.functional as F
@@ -80,6 +80,8 @@ parser.add_argument('--save_thred', type=float, default=1.05, help='threashold f
 
 parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
                     help='Host environment to determine dataset paths')
+parser.add_argument('--train_mode', default='unsupervised', choices=['unsupervised', 'supervised'],
+                    help='Training mode (unsupervised uses photometric loss, supervised uses ground truth optical flow)')
 
 args = parser.parse_args()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -147,7 +149,10 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     valid_batches = 0
 
     for i_batch, data in enumerate(train_loader, 0):
-        voxel_tensor, former_gray, latter_gray = data
+        if args.train_mode == 'supervised':
+            voxel_tensor, gt_flow, gt_mask = data
+        else:
+            voxel_tensor, former_gray, latter_gray = data
 
         voxel_nonzero_count = torch.count_nonzero(voxel_tensor)
         if i_batch % 100 == 0:
@@ -172,21 +177,33 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
 
             event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
 
-            photometric_loss = photometric_loss_multiscale(
-                former_gray[:, 0, :, :].to(device).float(), 
-                latter_gray[:, 0, :, :].to(device).float(), 
-                event_mask, 
-                flow_preds_fp32, 
-                device, 
-                print_details, 
-                weights=multiscale_weights
-            )
+            if args.train_mode == 'supervised':
+                supervised_loss = supervised_loss_multiscale(
+                    flow_preds_fp32,
+                    gt_flow.to(device).float(),
+                    gt_mask.to(device).float(),
+                    weights=multiscale_weights
+                )
+                loss_metric = supervised_loss
+                loss_name = 'supervised_loss'
+            else:
+                photometric_loss = photometric_loss_multiscale(
+                    former_gray[:, 0, :, :].to(device).float(), 
+                    latter_gray[:, 0, :, :].to(device).float(), 
+                    event_mask, 
+                    flow_preds_fp32, 
+                    device, 
+                    print_details, 
+                    weights=multiscale_weights
+                )
+                loss_metric = photometric_loss
+                loss_name = 'photometric_loss'
 
             # Smoothness loss
             smoothness_loss = smooth_loss(flow_preds_fp32)
 
             # total_loss
-            loss = photometric_loss + smoothness_loss
+            loss = loss_metric + smoothness_loss
 
             optimizer.zero_grad()
 
@@ -204,15 +221,15 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             scaler.update()
 
             # record loss and EPE
-            train_writer.add_scalar('train_loss', loss.item(), iter_g)
-            train_writer.add_scalar('photometric_loss', photometric_loss.item(), iter_g)
-            train_writer.add_scalar('smoothness_loss', smoothness_loss.item(), iter_g)
+            train_writer.add_scalar('train_loss/total_loss', loss.item(), iter_g)
+            train_writer.add_scalar(f'train_loss/{loss_name}', loss_metric.item(), iter_g)
+            train_writer.add_scalar('train_loss/smoothness_loss', smoothness_loss.item(), iter_g)
                 
             losses.update(loss.item(), event_data.size(0))
 
             if print_details:
                 now = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M-%S")
-                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses}, photometric_loss: {photometric_loss.item():.2f}, smoothness_loss: {smoothness_loss.item():.2f}')
+                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses.val:.2f}, {loss_name}: {loss_metric.item():.2f}, smoothness_loss: {smoothness_loss.item():.2f}')
                 print('-------------------------------------------------------')
 
             iter_g += 1
@@ -561,13 +578,27 @@ def main():
             if any(val_seq in dataset_path for val_seq in hold_outs):
                 continue
                 
-            print(f"Loading DSEC Train dataset {dataset_path}...")
-            single_dataset = DatasetTrain(
-                args.dt, 
-                dataset_path, 
-                transform=co_transform, 
-                num_bins=args.num_bins
-            )
+            if args.train_mode == 'supervised':
+                gt_path = dataset_path.replace('_data.hdf5', '_gt.hdf5')
+                if not os.path.exists(gt_path):
+                    print(f"Skipping {dataset_path}: No GT file found for supervised training")
+                    continue
+                print(f"Loading DSEC Supervised Train dataset {dataset_path}...")
+                single_dataset = DatasetTrainDSEC_Supervised(
+                    args.dt,
+                    dataset_path,
+                    gt_path,
+                    transform=co_transform,
+                    num_bins=args.num_bins
+                )
+            else:
+                print(f"Loading DSEC Train dataset {dataset_path}...")
+                single_dataset = DatasetTrain(
+                    args.dt, 
+                    dataset_path, 
+                    transform=co_transform, 
+                    num_bins=args.num_bins
+                )
             single_loader = DataLoader(
                 dataset=single_dataset, 
                 batch_size=batch_size, 
