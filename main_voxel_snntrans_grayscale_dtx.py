@@ -290,11 +290,39 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
             # ---> CRITICAL FIX: Scale the flow magnitude by the spatial upsample factor <---
             scale_h = image_resize / output_temp.size(2)
             scale_w = image_resize / output_temp.size(3)
+
+            # Only scale the translation parameters (v_x, v_y), NOT angular rotation (omega)
             output_resized[:, 0, :, :] *= scale_w
             output_resized[:, 1, :, :] *= scale_h
             
+            # ---> SE(2) Rigid Motion Unrolling <---
+            b, c, h, w = output_resized.shape
+            if c == 3:
+                xx = torch.arange(0, w, device=output_resized.device).view(1, -1).repeat(h, 1)
+                yy = torch.arange(0, h, device=output_resized.device).view(-1, 1).repeat(1, w)
+                xx = xx.view(1, 1, h, w).repeat(b, 1, 1, 1).float()
+                yy = yy.view(1, 1, h, w).repeat(b, 1, 1, 1).float()
+
+                v_x = output_resized[:, 0:1, :, :]
+                v_y = output_resized[:, 1:2, :, :]
+                omega = torch.tanh(output_resized[:, 2:3, :, :]) * 0.1
+
+                cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+                xx_c = xx - cx
+                yy_c = yy - cy
+
+                cos_w = torch.cos(omega)
+                sin_w = torch.sin(omega)
+
+                x_new = xx_c * cos_w - yy_c * sin_w + cx + v_x
+                y_new = xx_c * sin_w + yy_c * cos_w + cy + v_y
+
+                pred_eff = torch.cat((x_new - xx, y_new - yy), dim=1)
+            else:
+                pred_eff = output_resized
+
             # Permute from [Channels, H, W] to [H, W, Channels] and convert to clean numpy
-            pred_flow = output_resized[0, :2, :, :].permute(1, 2, 0).numpy()
+            pred_flow = pred_eff[0, :2, :, :].permute(1, 2, 0).numpy()
 
             u_gt_all = gt_temp[:, 0, :, :].copy()
             v_gt_all = gt_temp[:, 1, :, :].copy()
