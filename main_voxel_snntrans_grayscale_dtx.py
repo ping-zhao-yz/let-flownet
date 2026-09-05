@@ -88,7 +88,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 image_resize = 256
 sp_threshold = args.sp_threshold
-div_flow = 1
+div_flow = 20
 
 if args.train_host == 'local':
     base_dir = '/media/windows_data/code/research'
@@ -180,7 +180,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             if args.train_mode == 'supervised':
                 supervised_loss = supervised_loss_multiscale(
                     flow_preds_fp32,
-                    gt_flow.to(device).float(),
+                    (gt_flow.to(device).float() / div_flow),  # Downscale for stable gradients
                     gt_mask.to(device).float(),
                     weights=multiscale_weights
                 )
@@ -317,9 +317,9 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
                 x_new = xx_c * cos_w - yy_c * sin_w + cx + v_x
                 y_new = xx_c * sin_w + yy_c * cos_w + cy + v_y
 
-                pred_eff = torch.cat((x_new - xx, y_new - yy), dim=1)
+                pred_eff = torch.cat((x_new - xx, y_new - yy), dim=1) * div_flow
             else:
-                pred_eff = output_resized
+                pred_eff = output_resized * div_flow
 
             # Permute from [Channels, H, W] to [H, W, Channels] and convert to clean numpy
             pred_flow = pred_eff[0, :2, :, :].permute(1, 2, 0).numpy()
