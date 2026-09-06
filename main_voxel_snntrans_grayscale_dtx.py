@@ -88,7 +88,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 image_resize = 256
 sp_threshold = args.sp_threshold
-div_flow = 20
+
+if args.train_mode == 'supervised':
+    div_flow = 20.0
+else:
+    div_flow = 1.0
 
 if args.train_host == 'local':
     base_dir = '/media/windows_data/code/research'
@@ -392,7 +396,7 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
             total_points += n_points
 
             if i_batch < len(output_writers):  # log first output of first batches
-                output_writers[i_batch].add_image('SpikeT FlowNet Outputs', flow2rgb(
+                output_writers[i_batch].add_image('Let FlowNet Outputs', flow2rgb(
                     div_flow * output_temp[0, :2], max_value=10), epoch)
 
             iters += 1

@@ -330,7 +330,7 @@ def validate(test_loader, model, epoch, output_writers):
             total_points += n_points
 
             if i_batch < len(output_writers):  # log first output of first batches
-                output_writers[i_batch].add_image('SpikeT FlowNet Outputs', flow2rgb(
+                output_writers[i_batch].add_image('Let FlowNet Outputs', flow2rgb(
                     div_flow * output_temp[0], max_value=10), epoch)
 
             iters += 1
