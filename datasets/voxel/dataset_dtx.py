@@ -169,6 +169,9 @@ class DatasetTest(Dataset):
                 self.orig_h, self.orig_w = image_shape[1], image_shape[2]
             else:
                 self.orig_h, self.orig_w = 260, 346
+        # Force DSEC event camera resolution (640x480) regardless of image canvas dimensions
+        if self.orig_w == 1440 or 'dsec' in dataset_file.lower():
+            self.orig_h, self.orig_w = 480, 640
 
     def __getitem__(self, index):
         if self.d_set is None:

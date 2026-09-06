@@ -284,33 +284,10 @@ def supervised_loss_multiscale(flow_preds, flow_gt, mask_gt, weights=None):
         gt_scaled[:, 0, :, :] *= scale_x
         gt_scaled[:, 1, :, :] *= scale_y
         
-        # Convert 3-channel prediction (v_x, v_y, omega) to 2D effective flow (u, v)
         mask_scaled = torch.nn.functional.interpolate(mask_gt, size=(h, w), mode='nearest')
         
-        if c == 3:
-            xx = torch.arange(0, w, device=pred.device).view(1, -1).repeat(h, 1)
-            yy = torch.arange(0, h, device=pred.device).view(-1, 1).repeat(1, w)
-            xx = xx.view(1, 1, h, w).repeat(b, 1, 1, 1).float()
-            yy = yy.view(1, 1, h, w).repeat(b, 1, 1, 1).float()
-
-            v_x = pred[:, 0:1, :, :]
-            v_y = pred[:, 1:2, :, :]
-            # Scale omega similarly to backward_warp
-            omega = torch.tanh(pred[:, 2:3, :, :]) * 0.1
-
-            cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
-            xx_c = xx - cx
-            yy_c = yy - cy
-
-            cos_w = torch.cos(omega)
-            sin_w = torch.sin(omega)
-
-            x_new = xx_c * cos_w - yy_c * sin_w + cx + v_x
-            y_new = xx_c * sin_w + yy_c * cos_w + cy + v_y
-
-            pred_eff = torch.cat((x_new - xx, y_new - yy), dim=1)
-        else:
-            pred_eff = pred
+        # ---> CRITICAL FIX: Isolate 2D flow (u, v) and ignore the 3rd channel <---
+        pred_eff = pred[:, :2, :, :]
             
         # Calculate L1 loss over valid pixels
         diff = torch.abs(pred_eff - gt_scaled)
