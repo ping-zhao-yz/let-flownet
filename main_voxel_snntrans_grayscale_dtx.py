@@ -428,7 +428,8 @@ def main():
 
     test_file_pairs = []
     if args.train_dataset == 'dsec':
-        test_envs = ['zurich_city_05_b', 'zurich_city_06_a', 'zurich_city_10_b', 'zurich_city_11_c']
+        # test_envs = ['zurich_city_05_b', 'zurich_city_06_a', 'zurich_city_10_b', 'zurich_city_11_c']
+        test_envs = ['zurich_city_10_b']  # Temporarily evaluate only on one sequence
         for t_env in test_envs:
             test_file_pairs.append((
                 os.path.join(args.dsec_test_dir, f"{t_env}_data.hdf5"),
