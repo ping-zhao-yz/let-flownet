@@ -6,7 +6,7 @@ from torch.utils.data import Dataset
 from datasets.voxel.voxel_grid import events_to_voxel_grid
 from loss.multiscaleloss import estimate_corresponding_gt_flow
 
-def get_raw_events_for_window(d_set, index, dt, xoff, yoff, orig_w, orig_h):
+def get_raw_events_for_window(d_set, index, dt, xoff, yoff, crop_w, crop_h):
     event_inds = d_set['davis']['left']['image_raw_event_inds']
     if index + dt >= len(event_inds):
         return None
@@ -26,8 +26,8 @@ def get_raw_events_for_window(d_set, index, dt, xoff, yoff, orig_w, orig_h):
     events_p = events[:, 3].astype(np.float32)
     events_p = 2*events_p - 1
 
-    # Spatial cropping (Strict 256x256 window)
-    mask = (events_x >= xoff) & (events_x < xoff + 256) & (events_y >= yoff) & (events_y < yoff + 256)
+    # Spatial cropping (dynamic crop_w and crop_h window)
+    mask = (events_x >= xoff) & (events_x < xoff + crop_w) & (events_y >= yoff) & (events_y < yoff + crop_h)
 
     events_packed = np.stack([
         events_t[mask],
@@ -154,11 +154,12 @@ class DatasetTrain(Dataset):
 
 
 class DatasetTest(Dataset):
-    def __init__(self, dt, dataset_file, gt_start_time=0, num_bins=10):
+    def __init__(self, dt, dataset_file, gt_start_time=0, num_bins=10, full_res=False):
         self.dt = dt
         self.num_bins = num_bins
         self.dataset_file = dataset_file
         self.gt_start_time = gt_start_time
+        self.full_res = full_res  # ---> Store the flag
         self.d_set = None
 
         with h5py.File(dataset_file, 'r') as d_set:
@@ -169,6 +170,7 @@ class DatasetTest(Dataset):
                 self.orig_h, self.orig_w = image_shape[1], image_shape[2]
             else:
                 self.orig_h, self.orig_w = 260, 346
+
         # Force DSEC event camera resolution (640x480) regardless of image canvas dimensions
         if self.orig_w == 1440 or 'dsec' in dataset_file.lower():
             self.orig_h, self.orig_w = 480, 640
@@ -177,8 +179,11 @@ class DatasetTest(Dataset):
         if self.d_set is None:
             self.d_set = h5py.File(self.dataset_file, 'r')
 
-        voxel_0 = torch.zeros(2, 256, 256, self.num_bins)
-        
+        # ---> Dynamically size the fallback zero tensor <---
+        out_h = self.orig_h if self.full_res else 256
+        out_w = self.orig_w if self.full_res else 256
+        voxel_0 = torch.zeros(2, out_h, out_w, self.num_bins)
+
         ts_f = self.gray_image_ts[index]
         ts_l = self.gray_image_ts[index + self.dt] if index + self.dt < self.length else 0.0
 
@@ -188,10 +193,16 @@ class DatasetTest(Dataset):
 
         if (index + 20 < self.length) and (index > 20):
             try:
-                # 1. Fetch raw events using strict mathematical center crop
-                xoff = max(0, (self.orig_w - 256) // 2)
-                yoff = max(0, (self.orig_h - 256) // 2)
-                events_packed = get_raw_events_for_window(self.d_set, index, self.dt, xoff, yoff, self.orig_w, self.orig_h)
+                # # 1. Fetch raw events using dynamic cropping logic
+                if self.full_res:
+                    xoff, yoff = 0, 0
+                    crop_w, crop_h = self.orig_w, self.orig_h
+                else:
+                    crop_w, crop_h = 256, 256
+                    xoff = max(0, (self.orig_w - crop_w) // 2)
+                    yoff = max(0, (self.orig_h - crop_h) // 2)
+
+                events_packed = get_raw_events_for_window(self.d_set, index, self.dt, xoff, yoff, crop_w, crop_h)
             except (OSError, IndexError, Exception) as e:
                 print(f"WARNING: HDF5 events read failed at index {index}. Recovering handle.")
                 try:
@@ -209,8 +220,8 @@ class DatasetTest(Dataset):
             voxel_tensor = events_to_voxel_grid(
                 events_packed,
                 num_bins=self.num_bins,
-                height=256,
-                width=256,
+                height=crop_h,
+                width=crop_w,
                 device=torch.device('cpu')
             )
 

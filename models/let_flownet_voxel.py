@@ -137,27 +137,21 @@ class Let_Flownet_Voxel(BaseModel):
             nn.init.constant_(m.bias, 0)
 
     def forward(self, input, image_resize, sp_threshold):
+        # ---> Dynamically infer dimensions for full-resolution support <---
+        B, _, H, W, num_bins = input.size()
 
         # Encoder-SNN: temporal feature extraction
         threshold = sp_threshold
 
-        mem_1 = torch.zeros(input.size(0), 64, int(
-            image_resize/2), int(image_resize/2)).to(input.device)
-        mem_2 = torch.zeros(input.size(0), 128, int(
-            image_resize/4), int(image_resize/4)).to(input.device)
-        mem_3 = torch.zeros(input.size(0), 256, int(
-            image_resize/8), int(image_resize/8)).to(input.device)
-        mem_4 = torch.zeros(input.size(0), 512, int(
-            image_resize/16), int(image_resize/16)).to(input.device)
+        mem_1 = torch.zeros(B, 64, H // 2, W // 2).to(input.device)
+        mem_2 = torch.zeros(B, 128, H // 4, W // 4).to(input.device)
+        mem_3 = torch.zeros(B, 256, H // 8, W // 8).to(input.device)
+        mem_4 = torch.zeros(B, 512, H // 16, W // 16).to(input.device)
 
-        mem_1_total = torch.zeros(input.size(0), 64, int(
-            image_resize/2), int(image_resize/2)).to(input.device)
-        mem_2_total = torch.zeros(input.size(0), 128, int(
-            image_resize/4), int(image_resize/4)).to(input.device)
-        mem_3_total = torch.zeros(input.size(0), 256, int(
-            image_resize/8), int(image_resize/8)).to(input.device)
-        mem_4_total = torch.zeros(input.size(0), 512, int(
-            image_resize/16), int(image_resize/16)).to(input.device)
+        mem_1_total = torch.zeros(B, 64, H // 2, W // 2).to(input.device)
+        mem_2_total = torch.zeros(B, 128, H // 4, W // 4).to(input.device)
+        mem_3_total = torch.zeros(B, 256, H // 8, W // 8).to(input.device)
+        mem_4_total = torch.zeros(B, 512, H // 16, W // 16).to(input.device)
 
         spike_1 = torch.zeros_like(mem_1)
         spike_2 = torch.zeros_like(mem_2)
@@ -221,8 +215,6 @@ class Let_Flownet_Voxel(BaseModel):
         """
 
         #************* path to transformer
-        H = W = image_resize
-
         # Small -> Big
         #******** scale 0
         token0 = self.split0(blocks[-1]).transpose(1, 2)

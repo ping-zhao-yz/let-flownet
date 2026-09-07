@@ -286,14 +286,17 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
 
             output_temp = output.cpu()
 
-            # Interpolate natively in PyTorch
+            # ---> Infer dimensions directly from the loaded tensor <---
+            input_h, input_w = event_data.size(2), event_data.size(3)
+
+            # Interpolate natively in PyTorch to match the actual input
             output_resized = torch.nn.functional.interpolate(
-                output_temp, size=(image_resize, image_resize), mode='bilinear', align_corners=False
+                output_temp, size=(input_h, input_w), mode='bilinear', align_corners=False
             )
 
             # ---> CRITICAL FIX: Scale the flow magnitude by the spatial upsample factor <---
-            scale_h = image_resize / output_temp.size(2)
-            scale_w = image_resize / output_temp.size(3)
+            scale_h = input_h / output_temp.size(2)
+            scale_w = input_w / output_temp.size(3)
 
             # Only scale the translation parameters (v_x, v_y), NOT angular rotation (omega)
             output_resized[:, 0, :, :] *= scale_w
@@ -443,11 +446,17 @@ def main():
         test_file_pairs.append((test_src_file, test_gt_file))
 
     test_loaders = []
+    is_dsec = (args.train_dataset == 'dsec')
     for t_src, t_gt in test_file_pairs:
         with h5py.File(t_gt, 'r') as d_label:
             gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
             
-        t_dataset = DatasetTest(args.dt, t_src, gt_start_time=gt_start, num_bins=args.num_bins)
+        t_dataset = DatasetTest(
+            args.dt, t_src,
+            gt_start_time=gt_start,
+            num_bins=args.num_bins,
+            full_res=is_dsec    # Enable full-res only for DSEC
+        )
         t_loader = DataLoader(
             dataset=t_dataset,
             batch_size=1,
