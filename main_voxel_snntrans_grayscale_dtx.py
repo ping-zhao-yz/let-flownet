@@ -525,19 +525,22 @@ def main():
     bias_params = [p for p in model.module.bias_parameters() if id(p) not in alpha_param_ids]
     weight_params = [p for p in model.module.weight_parameters() if id(p) not in alpha_param_ids]
 
+    # ---> BACKWARD COMPATIBILITY: Dynamic SNN Learning Rate Scale <---
+    # MVSEC and UZH-FPV keep the 0.01x bottleneck. DSEC gets full 1.0x velocity.
+    snn_lr_scale = 1.0 if args.train_dataset == 'dsec' else 0.01
+
     if args.solver == 'adam':
         optimizer = torch.optim.Adam([
             {'params': bias_params, 'weight_decay': 0.0},
             {'params': weight_params, 'weight_decay': 4e-4},
-            # ---> CRITICAL: 100x smaller LR, Zero Weight Decay for SNN <---
-            {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0} # Ensure SNN decay parameters aren't flattened by L2
+            {'params': alpha_params, 'lr': args.lr * snn_lr_scale, 'weight_decay': 0.0} 
         ], lr=args.lr)
         
     elif args.solver == 'sgd':
         optimizer = torch.optim.SGD([
             {'params': bias_params, 'weight_decay': 0.0},
             {'params': weight_params, 'weight_decay': 4e-4},
-            {'params': alpha_params, 'lr': args.lr * 0.01, 'weight_decay': 0.0}
+            {'params': alpha_params, 'lr': args.lr * snn_lr_scale, 'weight_decay': 0.0}
         ], lr=args.lr, momentum=0.9)
 
     # Conditional Scheduler Setup
