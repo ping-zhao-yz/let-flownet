@@ -125,8 +125,8 @@ iter_g = 0
 # DSEC requires gradient accumulation to fit the 480x640 tensor in VRAM.
 # MVSEC and UZH-FPV (256x256) remain at true batch size 8 for maximum GPU efficiency.
 if args.train_dataset == 'dsec' and args.train_mode == 'supervised':
-    batch_size = 2          # Physical batch size
-    accumulate_steps = 4    # Virtual multiplier (2 * 4 = 8)
+    batch_size = 4          # Physical batch size
+    accumulate_steps = 2    # Virtual multiplier (2 * 4 = 8)
 else:
     batch_size = 8          # True batch size
     accumulate_steps = 1    # No accumulation
