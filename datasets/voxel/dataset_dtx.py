@@ -262,9 +262,10 @@ class DatasetTrainDSEC_Supervised(Dataset):
         if self.d_label is None:
             self.d_label = h5py.File(self.gt_file, 'r')
 
-        voxel_0 = torch.zeros(2, 256, 256, self.num_bins)
-        gt_flow_0 = torch.zeros(2, 256, 256)
-        mask_0 = torch.zeros(1, 256, 256)
+        # ---> Dynamically size fallback tensors to full resolution <---
+        voxel_0 = torch.zeros(2, self.orig_h, self.orig_w, self.num_bins)
+        gt_flow_0 = torch.zeros(2, self.orig_h, self.orig_w)
+        mask_0 = torch.zeros(1, self.orig_h, self.orig_w)
 
         if index + 100 < self.length and index > 100:
             try:
@@ -287,8 +288,9 @@ class DatasetTrainDSEC_Supervised(Dataset):
                 self.d_set = None
                 return voxel_0, gt_flow_0, mask_0
 
-            xoff = random.randint(0, max(0, self.orig_w - 256))
-            yoff = random.randint(0, max(0, self.orig_h - 256))
+            # ---> FULL RESOLUTION TRAINING: Remove random offsets <---
+            xoff, yoff = 0, 0
+            crop_w, crop_h = self.orig_w, self.orig_h
 
             events_x = events[:, 0]
             events_y = events[:, 1]
@@ -296,7 +298,7 @@ class DatasetTrainDSEC_Supervised(Dataset):
             events_p = events[:, 3].astype(np.float32)
             events_p = 2*events_p - 1
 
-            mask = (events_x >= xoff) & (events_x < xoff + 256) & (events_y >= yoff) & (events_y < yoff + 256)
+            mask = (events_x >= xoff) & (events_x < xoff + crop_w) & (events_y >= yoff) & (events_y < yoff + crop_h)
             events_packed = np.stack([
                 events_t[mask],
                 events_x[mask] - xoff,
@@ -310,8 +312,8 @@ class DatasetTrainDSEC_Supervised(Dataset):
             voxel_tensor = events_to_voxel_grid(
                 events_packed,
                 num_bins=self.num_bins,
-                height=256,
-                width=256,
+                height=crop_h, # ---> Pass Dynamic Height
+                width=crop_w,  # ---> Pass Dynamic Width
                 device=torch.device('cpu')
             )
 
@@ -346,7 +348,8 @@ class DatasetTrainDSEC_Supervised(Dataset):
                 u_gt_all, v_gt_all, gt_ts_slice, ts_f, ts_l)
             gt_flow = np.stack((u_gt, v_gt), axis=2)
 
-            gt_flow_cropped = gt_flow[yoff:yoff+256, xoff:xoff+256, :]
+            # ---> Remove the 256 slice, take the full frame <---
+            gt_flow_cropped = gt_flow[yoff:yoff+crop_h, xoff:xoff+crop_w, :]
             
             valid_mask = np.linalg.norm(gt_flow_cropped, axis=2) > 0
             
@@ -375,7 +378,7 @@ class DatasetTrainDSEC_Supervised(Dataset):
                 # Invert both U and V
                 gt_flow_t *= -1.0
 
-            # Move Time to the last dimension for the SNN: [2, 256, 256, num_bins]
+            # Move Time to the last dimension for the SNN: [2, 480, 640, num_bins]
             voxel_tensor = voxel_tensor.permute(1, 2, 3, 0)
             
             event_mask = (torch.sum(voxel_tensor, dim=3) > 0).float()

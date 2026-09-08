@@ -119,9 +119,17 @@ save_dir = f'{base_dir}/outputs/let_flownet_voxel_multiscale_ilif_edc_loss_dt{ar
 arch = "let_flownet_voxel"
 
 epochs = 100
-batch_size = 8
 iter_g = 0
 
+# ---> BACKWARD COMPATIBILITY: Dynamic Batching <---
+# DSEC requires gradient accumulation to fit the 480x640 tensor in VRAM.
+# MVSEC and UZH-FPV (256x256) remain at true batch size 8 for maximum GPU efficiency.
+if args.train_dataset == 'dsec' and args.train_mode == 'supervised':
+    batch_size = 2          # Physical batch size
+    accumulate_steps = 4    # Virtual multiplier (2 * 4 = 8)
+else:
+    batch_size = 8          # True batch size
+    accumulate_steps = 1    # No accumulation
 
 def initInputRepresentation(former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off, device, image_resize):
     input_representation = torch.zeros(
@@ -140,7 +148,7 @@ def initInputRepresentation(former_inputs_on, former_inputs_off, latter_inputs_o
     return input_representation.type(torch.FloatTensor).to(device)
 
 
-def train(train_loader, model, optimizer, epoch, train_writer, scaler):
+def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulate_steps):
     global iter_g, args, image_resize, sp_threshold
     np.set_printoptions(precision=2)
     losses = AverageMeter()
@@ -207,29 +215,41 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             smoothness_loss = smooth_loss(flow_preds_fp32)
 
             # total_loss
-            loss = loss_metric + smoothness_loss
+            total_loss = loss_metric + smoothness_loss
 
-            optimizer.zero_grad()
+            # ---> GRADIENT ACCUMULATION: Normalize the loss <---
+            loss = total_loss / accumulate_steps
+
+            # optimizer.zero_grad()
 
             # --- MIXED PRECISION BACKWARD PASS ---
             # The scaler will compute the loss gradients in safe FP32, and automatically 
             # cast them back to FP16 when they flow backwards into the network layers.
             scaler.scale(loss).backward()
 
-            # Unscale the gradients BEFORE clipping to ensure the max_norm threshold is accurate
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # ---> GRADIENT ACCUMULATION: Only step every N batches <---
+            if (i_batch + 1) % accumulate_steps == 0 or (i_batch + 1) == len(train_loader):
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
 
-            # Step optimizer and update scaler
-            scaler.step(optimizer)
-            scaler.update()
+            # # Unscale the gradients BEFORE clipping to ensure the max_norm threshold is accurate
+            # scaler.unscale_(optimizer)
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-            # record loss and EPE
-            train_writer.add_scalar('train_loss/total_loss', loss.item(), iter_g)
+            # # Step optimizer and update scaler
+            # scaler.step(optimizer)
+            # scaler.update()
+
+            # record loss and EPE (Multiply loss back up so TensorBoard graphs remain accurate)
+            train_writer.add_scalar('train_loss/total_loss', loss.item() * accumulate_steps, iter_g)
             train_writer.add_scalar(f'train_loss/{loss_name}', loss_metric.item(), iter_g)
             train_writer.add_scalar('train_loss/smoothness_loss', smoothness_loss.item(), iter_g)
                 
-            losses.update(loss.item(), event_data.size(0))
+            losses.update(total_loss.item(), event_data.size(0))
 
             if print_details:
                 now = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M-%S")
@@ -693,13 +713,13 @@ def main():
             epoch_loss = 0
             for loader in train_loader:
                 # Train fully on one file before moving to the next
-                loss = train(loader, model, optimizer, epoch, train_writer, scaler)
+                loss = train(loader, model, optimizer, epoch, train_writer, scaler, accumulate_steps)
                 epoch_loss += loss
             
             train_loss = epoch_loss / len(train_loader)
         else:
             # Standard MVSEC single-loader logic
-            train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler)
+            train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulate_steps)
 
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
 
