@@ -73,7 +73,7 @@ class DatasetTrain(Dataset):
                 yoff = random.randint(0, max(0, orig_h - 256))
 
                 # 1. Fetch raw events using the exact dynamic random crop
-                events_packed = get_raw_events_for_window(self.d_set, index, self.dt, xoff, yoff, orig_w, orig_h)
+                events_packed = get_raw_events_for_window(self.d_set, index, self.dt, xoff, yoff, 256, 256)
             except (OSError, IndexError, Exception) as e:
                 print(f"WARNING: HDF5 image/event read failed at index {index}. Recovering handle.")
                 try:
@@ -262,10 +262,9 @@ class DatasetTrainDSEC_Supervised(Dataset):
         if self.d_label is None:
             self.d_label = h5py.File(self.gt_file, 'r')
 
-        # ---> Dynamically size fallback tensors to full resolution <---
-        voxel_0 = torch.zeros(2, self.orig_h, self.orig_w, self.num_bins)
-        gt_flow_0 = torch.zeros(2, self.orig_h, self.orig_w)
-        mask_0 = torch.zeros(1, self.orig_h, self.orig_w)
+        voxel_0 = torch.zeros(2, 480, 640, self.num_bins)
+        gt_flow_0 = torch.zeros(2, 480, 640)
+        mask_0 = torch.zeros(1, 480, 640)
 
         if index + 100 < self.length and index > 100:
             try:
@@ -288,21 +287,17 @@ class DatasetTrainDSEC_Supervised(Dataset):
                 self.d_set = None
                 return voxel_0, gt_flow_0, mask_0
 
-            # ---> FULL RESOLUTION TRAINING: Remove random offsets <---
-            xoff, yoff = 0, 0
-            crop_w, crop_h = self.orig_w, self.orig_h
-
             events_x = events[:, 0]
             events_y = events[:, 1]
             events_t = events[:, 2].astype(np.float64)
             events_p = events[:, 3].astype(np.float32)
             events_p = 2*events_p - 1
 
-            mask = (events_x >= xoff) & (events_x < xoff + crop_w) & (events_y >= yoff) & (events_y < yoff + crop_h)
+            mask = (events_x >= 0) & (events_x < 640) & (events_y >= 0) & (events_y < 480)
             events_packed = np.stack([
                 events_t[mask],
-                events_x[mask] - xoff,
-                events_y[mask] - yoff,
+                events_x[mask],
+                events_y[mask],
                 events_p[mask]
             ], axis=1)
 
@@ -312,8 +307,8 @@ class DatasetTrainDSEC_Supervised(Dataset):
             voxel_tensor = events_to_voxel_grid(
                 events_packed,
                 num_bins=self.num_bins,
-                height=crop_h, # ---> Pass Dynamic Height
-                width=crop_w,  # ---> Pass Dynamic Width
+                height=480,
+                width=640,
                 device=torch.device('cpu')
             )
 
@@ -348,8 +343,7 @@ class DatasetTrainDSEC_Supervised(Dataset):
                 u_gt_all, v_gt_all, gt_ts_slice, ts_f, ts_l)
             gt_flow = np.stack((u_gt, v_gt), axis=2)
 
-            # ---> Remove the 256 slice, take the full frame <---
-            gt_flow_cropped = gt_flow[yoff:yoff+crop_h, xoff:xoff+crop_w, :]
+            gt_flow_cropped = gt_flow[:480, :640, :]
             
             valid_mask = np.linalg.norm(gt_flow_cropped, axis=2) > 0
             

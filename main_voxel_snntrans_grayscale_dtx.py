@@ -80,16 +80,14 @@ parser.add_argument('--save_thred', type=float, default=1.05, help='threashold f
 
 parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
                     help='Host environment to determine dataset paths')
-parser.add_argument('--train_mode', default='unsupervised', choices=['unsupervised', 'supervised'],
-                    help='Training mode (unsupervised uses photometric loss, supervised uses ground truth optical flow)')
 
 args = parser.parse_args()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-image_resize = 256
+vis_resolution = 256
 sp_threshold = args.sp_threshold
 
-if args.train_mode == 'supervised':
+if args.train_dataset == 'dsec':
     div_flow = 20.0
 else:
     div_flow = 1.0
@@ -124,32 +122,16 @@ iter_g = 0
 # ---> BACKWARD COMPATIBILITY: Dynamic Batching <---
 # DSEC requires gradient accumulation to fit the 480x640 tensor in VRAM.
 # MVSEC and UZH-FPV (256x256) remain at true batch size 8 for maximum GPU efficiency.
-if args.train_dataset == 'dsec' and args.train_mode == 'supervised':
-    batch_size = 4          # Physical batch size
-    accumulate_steps = 2    # Virtual multiplier (2 * 4 = 8)
+if args.train_dataset == 'dsec':
+    batch_size = 2          # Physical batch size
+    accumulate_steps = 4    # Virtual multiplier (2 * 4 = 8)
 else:
     batch_size = 8          # True batch size
     accumulate_steps = 1    # No accumulation
 
-def initInputRepresentation(former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off, device, image_resize):
-    input_representation = torch.zeros(
-        former_inputs_on.size(0), 4, image_resize, image_resize, former_inputs_on.size(3)).float()
-
-    for b in range(4):
-        if b == 0:
-            input_representation[:, 0, :, :, :] = former_inputs_on
-        elif b == 1:
-            input_representation[:, 1, :, :, :] = former_inputs_off
-        elif b == 2:
-            input_representation[:, 2, :, :, :] = latter_inputs_on
-        elif b == 3:
-            input_representation[:, 3, :, :, :] = latter_inputs_off
-
-    return input_representation.type(torch.FloatTensor).to(device)
-
 
 def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulate_steps):
-    global iter_g, args, image_resize, sp_threshold
+    global iter_g, args, vis_resolution, sp_threshold
     np.set_printoptions(precision=2)
     losses = AverageMeter()
 
@@ -161,7 +143,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
     valid_batches = 0
 
     for i_batch, data in enumerate(train_loader, 0):
-        if args.train_mode == 'supervised':
+        if args.train_dataset == 'dsec':
             voxel_tensor, gt_flow, gt_mask = data
         else:
             voxel_tensor, former_gray, latter_gray = data
@@ -180,7 +162,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
             # --- MIXED PRECISION FORWARD PASS ---
             with torch.amp.autocast('cuda', enabled=args.mixed_precision, dtype=torch.bfloat16):
                 # 1. Compute output (SNN + Transformer run in ultra-fast FP16)
-                flow_predictions = model(event_data, image_resize, sp_threshold)
+                flow_predictions = model(event_data, sp_threshold)
 
             # --- FORCE LOSS CALCULATION TO FP32 ---
             # 2. Step OUTSIDE the autocast block and explicitly cast to float32.
@@ -189,7 +171,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
 
             event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
 
-            if args.train_mode == 'supervised':
+            if args.train_dataset == 'dsec':
                 supervised_loss = supervised_loss_multiscale(
                     flow_preds_fp32,
                     (gt_flow.to(device).float() / div_flow),  # Downscale for stable gradients
@@ -263,7 +245,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
 
 
 def validate(test_loader, model, epoch, output_writers, current_test_src_file, current_test_gt_file):
-    global args, image_resize, sp_threshold
+    global args, vis_resolution, sp_threshold
     d_label = h5py.File(current_test_gt_file, 'r')
     gt_temp = np.float32(d_label['davis']['left']['flow_dist'])
     gt_ts_temp = np.float64(d_label['davis']['left']['flow_dist_ts'])
@@ -298,7 +280,7 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
             event_data = voxel_tensor.to(device)
 
             # compute output
-            output = model(event_data, image_resize, sp_threshold)
+            output = model(event_data, sp_threshold)
 
             # ---> Extract final scale if using Multi-Scale <---
             if isinstance(output, list):
@@ -349,7 +331,7 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
                 cv2.imshow('Spike Image', spike_image)
 
                 gray = cv2.resize(
-                    gray_image[i_batch], (scale*image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
+                    gray_image[i_batch], (scale*vis_resolution, scale * vis_resolution), interpolation=cv2.INTER_LINEAR)
                 cv2.imshow('Gray Image', cv2.cvtColor(
                     gray, cv2.COLOR_BGR2RGB))
 
@@ -358,39 +340,39 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
                 
                 # Directly slice the NumPy array (no np.array() wrappers)
                 x_flow = cv2.resize(out_temp[0, 0, :, :], (
-                    scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
+                    scale * vis_resolution, scale * vis_resolution), interpolation=cv2.INTER_LINEAR)
                 y_flow = cv2.resize(out_temp[0, 1, :, :], (
-                    scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
+                    scale * vis_resolution, scale * vis_resolution), interpolation=cv2.INTER_LINEAR)
                 rgb_flow = flow_viz_np(x_flow, y_flow)
                 cv2.imshow('Predicted Flow', cv2.cvtColor(
                     rgb_flow, cv2.COLOR_BGR2RGB))
 
                 gt_flow_x = cv2.resize(
-                    gt_flow[:, :, 0], (scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
+                    gt_flow[:, :, 0], (scale * vis_resolution, scale * vis_resolution), interpolation=cv2.INTER_LINEAR)
                 gt_flow_y = cv2.resize(
-                    gt_flow[:, :, 1], (scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
+                    gt_flow[:, :, 1], (scale * vis_resolution, scale * vis_resolution), interpolation=cv2.INTER_LINEAR)
                 gt_flow_large = flow_viz_np(gt_flow_x, gt_flow_y)
                 cv2.imshow('GT Flow', cv2.cvtColor(
                     gt_flow_large, cv2.COLOR_BGR2RGB))
 
                 x_flow_masked = cv2.resize(out_temp[0, 0, :, :] * mask_temp_np, (
-                    scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
+                    scale * vis_resolution, scale * vis_resolution), interpolation=cv2.INTER_LINEAR)
                 y_flow_masked = cv2.resize(out_temp[0, 1, :, :] * mask_temp_np, (
-                    scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR)
+                    scale * vis_resolution, scale * vis_resolution), interpolation=cv2.INTER_LINEAR)
                 rgb_flow_masked = flow_viz_np(x_flow_masked, y_flow_masked)
                 cv2.imshow('Masked Predicted Flow', cv2.cvtColor(
                     rgb_flow_masked, cv2.COLOR_BGR2RGB))
 
                 # Calculate dynamic center offset for visualization crop to match network input exactly
-                xoff_vis = max(0, (gt_flow.shape[1] - image_resize) // 2)
-                yoff_vis = max(0, (gt_flow.shape[0] - image_resize) // 2)
-                gt_flow_cropped = gt_flow[yoff_vis : yoff_vis + image_resize, xoff_vis : xoff_vis + image_resize, :]
+                xoff_vis = max(0, (gt_flow.shape[1] - vis_resolution) // 2)
+                yoff_vis = max(0, (gt_flow.shape[0] - vis_resolution) // 2)
+                gt_flow_cropped = gt_flow[yoff_vis : yoff_vis + vis_resolution, xoff_vis : xoff_vis + vis_resolution, :]
                 
                 gt_flow_x_masked = gt_flow_cropped[:, :, 0] * mask_temp_np
                 gt_flow_y_masked = gt_flow_cropped[:, :, 1] * mask_temp_np
                 gt_flow_large_masked = flow_viz_np(
-                    cv2.resize(gt_flow_x_masked, (scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR),
-                    cv2.resize(gt_flow_y_masked, (scale * image_resize, scale * image_resize), interpolation=cv2.INTER_LINEAR))
+                    cv2.resize(gt_flow_x_masked, (scale * vis_resolution, scale * vis_resolution), interpolation=cv2.INTER_LINEAR),
+                    cv2.resize(gt_flow_y_masked, (scale * vis_resolution, scale * vis_resolution), interpolation=cv2.INTER_LINEAR))
                 cv2.imshow('Masked GT Flow', cv2.cvtColor(
                     gt_flow_large_masked, cv2.COLOR_BGR2RGB))
 
@@ -617,37 +599,29 @@ def main():
             if any(val_seq in dataset_path for val_seq in hold_outs):
                 continue
                 
-            if args.train_mode == 'supervised':
-                gt_path = dataset_path.replace('_data.hdf5', '_gt.hdf5')
-                if not os.path.exists(gt_path):
-                    print(f"Skipping {dataset_path}: No GT file found for supervised training")
-                    continue
-                print(f"Loading DSEC Supervised Train dataset {dataset_path}...")
-                single_dataset = DatasetTrainDSEC_Supervised(
-                    args.dt,
-                    dataset_path,
-                    gt_path,
-                    transform=co_transform,
-                    num_bins=args.num_bins
-                )
-            else:
-                print(f"Loading DSEC Train dataset {dataset_path}...")
-                single_dataset = DatasetTrain(
-                    args.dt, 
-                    dataset_path, 
-                    transform=co_transform, 
-                    num_bins=args.num_bins
-                )
-            single_loader = DataLoader(
-                dataset=single_dataset, 
-                batch_size=batch_size, 
-                shuffle=True, 
-                num_workers=workers, 
-                pin_memory=True, 
-                drop_last=True,
-                multiprocessing_context='spawn'
+            gt_path = dataset_path.replace('_data.hdf5', '_gt.hdf5')
+            if not os.path.exists(gt_path):
+                print(f"Skipping {dataset_path}: No GT file found for supervised training")
+                continue
+            print(f"Loading DSEC Supervised Train dataset {dataset_path}...")
+            single_dataset = DatasetTrainDSEC_Supervised(
+                args.dt,
+                dataset_path,
+                gt_path,
+                transform=co_transform,
+                num_bins=args.num_bins
             )
-            train_loader.append(single_loader)
+            train_loader.append(
+                DataLoader(
+                    dataset=single_dataset,
+                    batch_size=batch_size,
+                    shuffle=True,
+                    num_workers=workers,
+                    pin_memory=True,
+                    drop_last=True,
+                    multiprocessing_context='spawn'
+                )
+            )
 
     elif args.train_dataset == 'mvsec':
         train_datasets = DatasetTrain(
