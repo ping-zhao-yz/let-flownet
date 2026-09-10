@@ -136,7 +136,7 @@ class Let_Flownet_Voxel(BaseModel):
             nn.init.normal_(m.weight, 0, 0.0001)
             nn.init.constant_(m.bias, 0)
 
-    def forward(self, input, image_resize, sp_threshold):
+    def forward(self, input, sp_threshold):
         # ---> Dynamically infer dimensions for full-resolution support <---
         B, _, H, W, num_bins = input.size()
 
