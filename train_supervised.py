@@ -75,6 +75,8 @@ parser.add_argument('--save_thred', type=float, default=1.05, help='threashold f
 
 parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
                     help='Host environment to determine dataset paths')
+parser.add_argument('--data_ratio', type=float, default=1.0, 
+                    help='Fraction of the dataset to use for rapid testing (e.g., 0.5 for half)')
 
 args = parser.parse_args()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -364,7 +366,11 @@ def main():
     val_fail_times = 0
 
     test_file_pairs = []
-    test_envs = ['zurich_city_10_b']  # Temporarily evaluate only on one sequence
+    test_envs = ['zurich_city_05_b', 'zurich_city_06_a', 'zurich_city_10_b', 'zurich_city_11_c']
+    if args.data_ratio < 1.0:
+        num_val = max(1, int(len(test_envs) * args.data_ratio))
+        test_envs = test_envs[:num_val]
+
     for t_env in test_envs:
         test_file_pairs.append((
             os.path.join(args.dsec_test_dir, f"{t_env}_data.hdf5"),
@@ -512,12 +518,15 @@ def main():
     # SOTA Protocol: Exclude these from training to act as the local test split
     hold_outs = ['zurich_city_05_b', 'zurich_city_06_a', 'zurich_city_10_b', 'zurich_city_11_c']
     
+    # Remove validation hold-outs from the available training pool
+    dsec_files = [f for f in dsec_files if not any(val_seq in f for val_seq in hold_outs)]
+    
+    if args.data_ratio < 1.0:
+        num_train = max(1, int(len(dsec_files) * args.data_ratio))
+        dsec_files = dsec_files[:num_train]
+        
     train_loader = []
     for dataset_path in dsec_files:
-        # Skip if the file is one of the designated validation hold-outs
-        if any(val_seq in dataset_path for val_seq in hold_outs):
-            continue
-            
         gt_path = dataset_path.replace('_data.hdf5', '_gt.hdf5')
         if not os.path.exists(gt_path):
             print(f"Skipping {dataset_path}: No GT file found for supervised training")
