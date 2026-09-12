@@ -143,51 +143,27 @@ def photometric_loss_multiscale(prev_images_temp, next_images_temp, event_images
     return total_photometric_loss
 
 
-"""
-Single-scale photometric loss, as defined in equation (3) of the paper.
-"""
-def photometric_loss_single(prev_images_temp, next_images_temp, event_images, output, device, print_details, weights=None):
-    flow = output
+def smooth_loss(flow_predictions):
+    def gradient(pred):
+        D_dy = pred[:, :, 1:] - pred[:, :, :-1]
+        D_dx = pred[:, :, :, 1:] - pred[:, :, :, :-1]
+        return D_dx, D_dy
 
-    height = flow.size(2)
-    width = flow.size(3)
+    if type(flow_predictions) not in [tuple, list]:
+        flow_predictions = [flow_predictions]
 
-    # 1. Expand dimensions from [Batch, H, W] to [Batch, 1, H, W]
-    prev_images_base = prev_images_temp.unsqueeze(1)
-    next_images_base = next_images_temp.unsqueeze(1)
-    event_mask_base = event_images.unsqueeze(1).float()
+    loss = 0
+    weight = 1.0
 
-    # 2. Resize directly on the GPU using PyTorch
-    prev_images_scaled = nn.functional.interpolate(
-        prev_images_base, size=(height, width), mode='bilinear', align_corners=False
-    )
-    next_images_scaled = nn.functional.interpolate(
-        next_images_base, size=(height, width), mode='bilinear', align_corners=False
-    )
-    
-    # Replace 'nearest' interpolation with max pooling to preserve sparse events
-    event_mask_scaled = nn.functional.adaptive_max_pool2d(
-        event_mask_base, output_size=(height, width)
-    )
-    
-    valid_mask = (event_mask_scaled > 0).float()
-
-    # Implement soft occlusion masking (E2FAI)
-    occlusion_weights = valid_mask * 1.0 + (1.0 - valid_mask) * 0.1
-
-    # Boundary Margin: Ignore the outer 5% to prevent out-of-frame warping outliers
-    margin_y = max(1, int(height * 0.05))
-    margin_x = max(1, int(width * 0.05))
-    occlusion_weights[:, :, :margin_y, :] = 0
-    occlusion_weights[:, :, -margin_y:, :] = 0
-    occlusion_weights[:, :, :, :margin_x] = 0
-    occlusion_weights[:, :, :, -margin_x:] = 0
-    
-    # 3. Calculate Loss
-    next_images_warped = backward_warp(next_images_scaled, flow)
-    error_temp_backward = next_images_warped - prev_images_scaled
-    
-    # Pass the occlusion weights to charbonnier
-    photometric_loss = charbonnier_loss(error_temp_backward, mask=occlusion_weights)
-
-    return photometric_loss
+    for flow in flow_predictions:
+        dx, dy = gradient(flow)
+        dx2, dxdy = gradient(dx)
+        dydx, dy2 = gradient(dy)
+        loss += (
+            dx2.abs().mean() 
+            + dxdy.abs().mean() 
+            + dydx.abs().mean() 
+            + dy2.abs().mean()
+        )*weight
+        weight /= 2.0
+    return loss

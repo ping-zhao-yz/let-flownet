@@ -2,35 +2,10 @@ import torch
 import numpy as np
 import cv2
 
-def smooth_loss(flow_predictions):
-    def gradient(pred):
-        D_dy = pred[:, :, 1:] - pred[:, :, :-1]
-        D_dx = pred[:, :, :, 1:] - pred[:, :, :, :-1]
-        return D_dx, D_dy
-
-    if type(flow_predictions) not in [tuple, list]:
-        flow_predictions = [flow_predictions]
-
-    loss = 0
-    weight = 1.0
-
-    for flow in flow_predictions:
-        dx, dy = gradient(flow)
-        dx2, dxdy = gradient(dx)
-        dydx, dy2 = gradient(dy)
-        loss += (
-            dx2.abs().mean() 
-            + dxdy.abs().mean() 
-            + dydx.abs().mean() 
-            + dy2.abs().mean()
-        )*weight
-        weight /= 2.0
-    return loss
-
 """
 DSEC benchmark metrics (new)
 """
-def flow_error_dense_dsec(gt_flow, pred_flow, mask_tensor, is_car=False):
+def flow_error_dense(gt_flow, pred_flow, mask_tensor, is_car=False):
     """
     Calculates standard DSEC benchmark metrics (backwards compatible with MVSEC).
     gt_flow: [H, W, 2] numpy array
@@ -190,37 +165,3 @@ def estimate_corresponding_gt_flow(
     y_shift[~y_mask] = 0
 
     return x_shift, y_shift
-
-def supervised_loss_multiscale(flow_preds, flow_gt, mask_gt, weights=None):
-    if weights is None:
-        weights = [0.01, 0.02, 0.08, 1.0]
-
-    if type(flow_preds) not in [tuple, list]:
-        flow_preds = [flow_preds]
-
-    loss = 0
-    for i, pred in enumerate(flow_preds):
-        b, c, h, w = pred.shape
-        
-        # Downsample ground truth flow and mask
-        scale_x = w / flow_gt.size(3)
-        scale_y = h / flow_gt.size(2)
-        
-        gt_scaled = torch.nn.functional.interpolate(flow_gt, size=(h, w), mode='bilinear', align_corners=False)
-        # Scale the magnitude!
-        gt_scaled[:, 0, :, :] *= scale_x
-        gt_scaled[:, 1, :, :] *= scale_y
-        
-        mask_scaled = torch.nn.functional.interpolate(mask_gt, size=(h, w), mode='nearest')
-        
-        # ---> CRITICAL FIX: Isolate 2D flow (u, v) and ignore the 3rd channel <---
-        pred_eff = pred[:, :2, :, :]
-            
-        # Calculate L1 loss over valid pixels
-        diff = torch.abs(pred_eff - gt_scaled)
-        # Average over all valid scalar components
-        l1_loss = (diff * mask_scaled).sum() / (mask_scaled.sum() * 2 + 1e-6)
-        
-        loss += weights[i] * l1_loss
-        
-    return loss

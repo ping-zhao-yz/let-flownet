@@ -19,10 +19,10 @@ from torch.utils.data import DataLoader
 from util.loss_util import AverageMeter
 from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
-from datasets.voxel.dataset_dtx import DatasetTest, DatasetTrain, DatasetTrainDSEC_Supervised
+from datasets.voxel.dataset_unsupervised import DatasetTest, DatasetTrain
 from models import let_flownet_voxel
-from loss.multiscaleloss import estimate_corresponding_gt_flow, flow_error_dense_dsec, smooth_loss, supervised_loss_multiscale
-from loss.photometric_loss_backward import photometric_loss_multiscale
+from loss.metrics import estimate_corresponding_gt_flow, flow_error_dense
+from loss.loss_photometric import smooth_loss, photometric_loss_multiscale
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -62,11 +62,8 @@ parser.add_argument('--sp_threshold', type=float, default=0.75, choices=[0.75, 0
 
 parser.add_argument('--num_bins', type=int, default=10, help='number of temporal bins for voxel grid')
 
-parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-fpv', 'dsec'],
+parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-fpv'],
                     help='dataset for training')
-
-parser.add_argument('--dsec_train_dir', default='/media/pzha9599/Software/dataset/dsec/train', help='Path to DSEC training data')
-parser.add_argument('--dsec_test_dir', default='/media/windows_data/code/research/dataset/Event/dsec/test', help='Path to DSEC testing data')
 
 parser.add_argument('--train_env', default='outdoor_day1', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
@@ -87,10 +84,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 vis_resolution = 256
 sp_threshold = args.sp_threshold
 
-if args.train_dataset == 'dsec':
-    div_flow = 20.0
-else:
-    div_flow = 1.0
+div_flow = 1.0
 
 if args.train_host == 'local':
     base_dir = '/media/windows_data/code/research'
@@ -102,15 +96,11 @@ uzh_fpv_dataset_path = f'{base_dir}/dataset/Event/uzh-fpv/data/'
 train_env = args.train_env
 test_env = args.test_env
 
-if args.train_dataset == 'dsec':
-    pass # Training and testing dataset paths for DSEC are handled dynamically in main()
-else:
-    # UZH-FPV and MVSEC share the same validation dataset; UZH-FPV doesn't use training dataset configuration here, same as DSEC
-    src_file_dir = f'{base_dir}/dataset/Event/mvsec/original'
-    train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
-    test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
-    test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
-
+# UZH-FPV and MVSEC share the same validation dataset; UZH-FPV doesn't use training dataset configuration here
+src_file_dir = f'{base_dir}/dataset/Event/mvsec/original'
+train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
+test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
+test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
 save_dir = f'{base_dir}/outputs/let_flownet_voxel_multiscale_ilif_edc_loss_dt{args.dt}_output'
 
@@ -118,19 +108,10 @@ arch = "let_flownet_voxel"
 
 epochs = 100
 iter_g = 0
-
-# ---> BACKWARD COMPATIBILITY: Dynamic Batching <---
-# DSEC requires gradient accumulation to fit the 480x640 tensor in VRAM.
-# MVSEC and UZH-FPV (256x256) remain at true batch size 8 for maximum GPU efficiency.
-if args.train_dataset == 'dsec':
-    batch_size = 2          # Physical batch size
-    accumulate_steps = 4    # Virtual multiplier (2 * 4 = 8)
-else:
-    batch_size = 8          # True batch size
-    accumulate_steps = 1    # No accumulation
+batch_size = 8
 
 
-def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulate_steps):
+def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     global iter_g, args, vis_resolution, sp_threshold
     np.set_printoptions(precision=2)
     losses = AverageMeter()
@@ -143,10 +124,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
     valid_batches = 0
 
     for i_batch, data in enumerate(train_loader, 0):
-        if args.train_dataset == 'dsec':
-            voxel_tensor, gt_flow, gt_mask = data
-        else:
-            voxel_tensor, former_gray, latter_gray = data
+        voxel_tensor, former_gray, latter_gray = data
 
         voxel_nonzero_count = torch.count_nonzero(voxel_tensor)
         if i_batch % 100 == 0:
@@ -156,7 +134,6 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
         if voxel_nonzero_count > 0:
             print_details = valid_batches % print_freq == 0
 
-            # No need for initInputRepresentation; shape is already [Batch, 2, H, W, num_bins]
             event_data = voxel_tensor.to(device)
 
             # --- MIXED PRECISION FORWARD PASS ---
@@ -171,67 +148,42 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
 
             event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
 
-            if args.train_dataset == 'dsec':
-                supervised_loss = supervised_loss_multiscale(
-                    flow_preds_fp32,
-                    (gt_flow.to(device).float() / div_flow),  # Downscale for stable gradients
-                    gt_mask.to(device).float(),
-                    weights=multiscale_weights
-                )
-                loss_metric = supervised_loss
-                loss_name = 'supervised_loss'
-            else:
-                photometric_loss = photometric_loss_multiscale(
-                    former_gray[:, 0, :, :].to(device).float(), 
-                    latter_gray[:, 0, :, :].to(device).float(), 
-                    event_mask, 
-                    flow_preds_fp32, 
-                    device, 
-                    print_details, 
-                    weights=multiscale_weights
-                )
-                loss_metric = photometric_loss
-                loss_name = 'photometric_loss'
+            photometric_loss = photometric_loss_multiscale(
+                former_gray[:, 0, :, :].to(device).float(), 
+                latter_gray[:, 0, :, :].to(device).float(), 
+                event_mask, 
+                flow_preds_fp32, 
+                device, 
+                print_details, 
+                weights=multiscale_weights
+            )
+            loss_metric = photometric_loss
+            loss_name = 'photometric_loss'
 
-            # Smoothness loss
             smoothness_loss = smooth_loss(flow_preds_fp32)
+            loss = loss_metric + smoothness_loss
 
-            # total_loss
-            total_loss = loss_metric + smoothness_loss
-
-            # ---> GRADIENT ACCUMULATION: Normalize the loss <---
-            loss = total_loss / accumulate_steps
-
-            # optimizer.zero_grad()
+            optimizer.zero_grad()
 
             # --- MIXED PRECISION BACKWARD PASS ---
             # The scaler will compute the loss gradients in safe FP32, and automatically 
             # cast them back to FP16 when they flow backwards into the network layers.
             scaler.scale(loss).backward()
 
-            # ---> GRADIENT ACCUMULATION: Only step every N batches <---
-            if (i_batch + 1) % accumulate_steps == 0 or (i_batch + 1) == len(train_loader):
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
+            # Unscale the gradients BEFORE clipping to ensure the max_norm threshold is accurate
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-            # # Unscale the gradients BEFORE clipping to ensure the max_norm threshold is accurate
-            # scaler.unscale_(optimizer)
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # Step optimizer and update scaler
+            scaler.step(optimizer)
+            scaler.update()
 
-            # # Step optimizer and update scaler
-            # scaler.step(optimizer)
-            # scaler.update()
-
-            # record loss and EPE (Multiply loss back up so TensorBoard graphs remain accurate)
-            train_writer.add_scalar('train_loss/total_loss', loss.item() * accumulate_steps, iter_g)
+            # record loss and EPE
+            train_writer.add_scalar('train_loss/total_loss', loss.item(), iter_g)
             train_writer.add_scalar(f'train_loss/{loss_name}', loss_metric.item(), iter_g)
             train_writer.add_scalar('train_loss/smoothness_loss', smoothness_loss.item(), iter_g)
                 
-            losses.update(total_loss.item(), event_data.size(0))
+            losses.update(loss.item(), event_data.size(0))
 
             if print_details:
                 now = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M-%S")
@@ -310,12 +262,6 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
             u_gt_all = gt_temp[:, 0, :, :].copy()
             v_gt_all = gt_temp[:, 1, :, :].copy()
 
-            # DSEC Parser stores invalid pixels (0 in 16-bit PNG) as -256.0.
-            # We must zero them out so the validity mask correctly ignores them.
-            invalid_mask = (u_gt_all == -256.0) & (v_gt_all == -256.0)
-            u_gt_all[invalid_mask] = 0.0
-            v_gt_all[invalid_mask] = 0.0
-
             u_gt, v_gt = estimate_corresponding_gt_flow(
                 u_gt_all, v_gt_all, gt_ts_temp, ts_f.numpy(), ts_l.numpy())
             gt_flow = np.stack((u_gt, v_gt), axis=2)
@@ -391,7 +337,7 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
 
             is_car_flag = 'outdoor' in test_env
 
-            epe, ae, pe1, pe2, pe3, n_points = flow_error_dense_dsec(gt_flow, pred_flow, mask_temp_np, is_car=is_car_flag)
+            epe, ae, pe1, pe2, pe3, n_points = flow_error_dense(gt_flow, pred_flow, mask_temp_np, is_car=is_car_flag)
 
             epe_sum += epe
             ae_sum += ae
@@ -436,19 +382,9 @@ def main():
     val_fail_times = 0
 
     test_file_pairs = []
-    if args.train_dataset == 'dsec':
-        # test_envs = ['zurich_city_05_b', 'zurich_city_06_a', 'zurich_city_10_b', 'zurich_city_11_c']
-        test_envs = ['zurich_city_10_b']  # Temporarily evaluate only on one sequence
-        for t_env in test_envs:
-            test_file_pairs.append((
-                os.path.join(args.dsec_test_dir, f"{t_env}_data.hdf5"),
-                os.path.join(args.dsec_test_dir, f"{t_env}_gt.hdf5")
-            ))
-    else:
-        test_file_pairs.append((test_src_file, test_gt_file))
+    test_file_pairs.append((test_src_file, test_gt_file))
 
     test_loaders = []
-    is_dsec = (args.train_dataset == 'dsec')
     for t_src, t_gt in test_file_pairs:
         with h5py.File(t_gt, 'r') as d_label:
             gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
@@ -456,8 +392,7 @@ def main():
         t_dataset = DatasetTest(
             args.dt, t_src,
             gt_start_time=gt_start,
-            num_bins=args.num_bins,
-            full_res=is_dsec    # Enable full-res only for DSEC
+            num_bins=args.num_bins
         )
         t_loader = DataLoader(
             dataset=t_dataset,
@@ -468,7 +403,7 @@ def main():
         )
         test_loaders.append((t_loader, t_src, t_gt))
         
-    print(f"=> Created {len(test_loaders)} validation loader(s) for {args.train_dataset.upper()}.")
+    print(f"=> Created {len(test_loaders)} validation loader(s).")
 
     save_path = '{},bat{},lr{},bin{}'.format(
         arch,
@@ -538,7 +473,7 @@ def main():
 
     # ---> BACKWARD COMPATIBILITY: Dynamic SNN Learning Rate Scale <---
     # MVSEC and UZH-FPV keep the 0.01x bottleneck. DSEC gets full 1.0x velocity.
-    snn_lr_scale = 1.0 if args.train_dataset == 'dsec' else 0.01
+    snn_lr_scale = 0.01
 
     if args.solver == 'adam':
         optimizer = torch.optim.Adam([
@@ -584,46 +519,9 @@ def main():
         transforms.RandomVerticalFlip(0.5)
     ])
 
-    assert (args.train_dataset in ['mvsec', 'uzh-fpv', 'dsec'])
+    assert (args.train_dataset in ['mvsec', 'uzh-fpv'])
 
-    if args.train_dataset == 'dsec':
-        import glob
-        dsec_files = glob.glob(os.path.join(args.dsec_train_dir, "*_data.hdf5"))
-        
-        # SOTA Protocol: Exclude these from training to act as the local test split
-        hold_outs = ['zurich_city_05_b', 'zurich_city_06_a', 'zurich_city_10_b', 'zurich_city_11_c']
-        
-        train_loader = []
-        for dataset_path in dsec_files:
-            # Skip if the file is one of the designated validation hold-outs
-            if any(val_seq in dataset_path for val_seq in hold_outs):
-                continue
-                
-            gt_path = dataset_path.replace('_data.hdf5', '_gt.hdf5')
-            if not os.path.exists(gt_path):
-                print(f"Skipping {dataset_path}: No GT file found for supervised training")
-                continue
-            print(f"Loading DSEC Supervised Train dataset {dataset_path}...")
-            single_dataset = DatasetTrainDSEC_Supervised(
-                args.dt,
-                dataset_path,
-                gt_path,
-                transform=co_transform,
-                num_bins=args.num_bins
-            )
-            train_loader.append(
-                DataLoader(
-                    dataset=single_dataset,
-                    batch_size=batch_size,
-                    shuffle=True,
-                    num_workers=workers,
-                    pin_memory=True,
-                    drop_last=True,
-                    multiprocessing_context='spawn'
-                )
-            )
-
-    elif args.train_dataset == 'mvsec':
+    if args.train_dataset == 'mvsec':
         train_datasets = DatasetTrain(
             args.dt,
             train_src_file,
@@ -680,20 +578,20 @@ def main():
         current_lr = optimizer.param_groups[0]['lr']
         print(f"Learning Rate: {current_lr:.6f}")
 
-        if args.train_dataset in ['uzh-fpv', 'dsec']:
+        if args.train_dataset in ['uzh-fpv']:
             # Shuffle the order we read the HDF5 sequence files every epoch
             random.shuffle(train_loader)
             
             epoch_loss = 0
             for loader in train_loader:
                 # Train fully on one file before moving to the next
-                loss = train(loader, model, optimizer, epoch, train_writer, scaler, accumulate_steps)
+                loss = train(loader, model, optimizer, epoch, train_writer, scaler)
                 epoch_loss += loss
             
             train_loss = epoch_loss / len(train_loader)
         else:
             # Standard MVSEC single-loader logic
-            train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulate_steps)
+            train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler)
 
         train_writer.add_scalar('mean_train_loss', train_loss, epoch)
 
