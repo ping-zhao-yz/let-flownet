@@ -84,7 +84,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 vis_resolution = 256
 sp_threshold = args.sp_threshold
 
-div_flow = 1.0
+div_flow = 20.0
 
 if args.train_host == 'local':
     base_dir = '/media/windows_data/code/research'
