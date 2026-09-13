@@ -145,6 +145,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
                 flow_preds_fp32,
                 (gt_flow.to(device).float() / div_flow),
                 gt_mask.to(device).float(),
+                print_details,
                 weights=multiscale_weights
             )
             loss_metric = supervised_loss
