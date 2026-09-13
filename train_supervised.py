@@ -113,6 +113,12 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
     # switch to train mode
     model.train()
 
+    # ---> CRITICAL FIX: Freeze Batch Norm Statistics <---
+    # Prevents batch_size=2 from destroying the absolute magnitude scale
+    for m in model.modules():
+        if isinstance(m, nn.BatchNorm2d):
+            m.eval()
+
     multiscale_weights = [0.01, 0.02, 0.08, 1.0]
     print_freq = 100
     valid_batches = 0
