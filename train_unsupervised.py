@@ -427,7 +427,7 @@ def main():
     # create model
     if args.pretrained:
         map_location = None if torch.cuda.is_available() else torch.device('cpu')
-        network_data = torch.load(args.pretrained, map_location)
+        network_data = torch.load(args.pretrained, map_location, weights_only=False)
         print(f"=> using pre-trained model '{arch}'")
     else:
         network_data = None
