@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import torch.nn.functional as F
 
 def supervised_loss_multiscale(flow_preds, flow_gt, mask_gt, weights=None):
     if weights is None:
@@ -11,26 +12,34 @@ def supervised_loss_multiscale(flow_preds, flow_gt, mask_gt, weights=None):
     loss = 0
     for i, pred in enumerate(flow_preds):
         b, c, h, w = pred.shape
-        
+
         # Downsample ground truth flow and mask
         scale_x = w / flow_gt.size(3)
         scale_y = h / flow_gt.size(2)
         
-        gt_scaled = torch.nn.functional.interpolate(flow_gt, size=(h, w), mode='bilinear', align_corners=False)
+        gt_scaled = F.interpolate(flow_gt, size=(h, w), mode='bilinear', align_corners=False)
         # Scale the magnitude!
         gt_scaled[:, 0, :, :] *= scale_x
         gt_scaled[:, 1, :, :] *= scale_y
         
-        mask_scaled = torch.nn.functional.interpolate(mask_gt, size=(h, w), mode='nearest')
-        
-        # ---> CRITICAL FIX: Isolate 2D flow (u, v) and ignore the 3rd channel <---
+        # ---> CRITICAL FIX: Use max_pool to preserve sparse boolean points without aliasing <---
+        mask_scaled = F.adaptive_max_pool2d(mask_gt, output_size=(h, w))
+
+        # ---> FIX: Isolate 2D flow (u, v) and ignore the 3rd channel <---
         pred_eff = pred[:, :2, :, :]
             
         # Calculate L1 loss over valid pixels
         diff = torch.abs(pred_eff - gt_scaled)
-        # Average over all valid scalar components
-        l1_loss = (diff * mask_scaled).sum() / (mask_scaled.sum() * 2 + 1e-6)
         
-        loss += weights[i] * l1_loss
+        # ---> FIX: Safe Denominator Clamping <---
+        valid_pixel_count = mask_scaled.sum()
+        
+        # Only calculate loss for this scale if there are valid ground-truth pixels!
+        if valid_pixel_count > 10: 
+            l1_loss = (diff * mask_scaled).sum() / (valid_pixel_count * 2)
+            loss += weights[i] * l1_loss
+        else:
+            # If the mask is empty at this resolution, append 0 loss to maintain the gradient graph
+            loss += weights[i] * (pred_eff * 0.0).sum()
         
     return loss
