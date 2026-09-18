@@ -515,8 +515,7 @@ def main():
 
     # Use strict rigid transformations to preserve SNN spike density and physical scaling
     co_transform = transforms.Compose([
-        transforms.RandomHorizontalFlip(0.5),
-        transforms.RandomVerticalFlip(0.5)
+        transforms.RandomHorizontalFlip(0.5)
     ])
 
     import glob
