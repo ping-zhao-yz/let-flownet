@@ -97,11 +97,10 @@ class DatasetTestDSEC(Dataset):
 
 
 class DatasetTrainDSEC_Supervised(Dataset):
-    def __init__(self, dt, dataset_file, gt_file, transform=None, num_bins=10):
+    def __init__(self, dt, dataset_file, gt_file, num_bins=10):
         self.dt = dt
         self.dataset_file = dataset_file
         self.gt_file = gt_file
-        self.transform = transform
         self.num_bins = num_bins
         self.d_set = None
         self.d_label = None
@@ -214,12 +213,6 @@ class DatasetTrainDSEC_Supervised(Dataset):
                 gt_flow_t = torch.flip(gt_flow_t, dims=[2])
                 mask_t = torch.flip(mask_t, dims=[2])
                 gt_flow_t[0, :, :] *= -1.0 
-
-            if random.random() > 0.5:
-                voxel_tensor = torch.flip(voxel_tensor, dims=[2])
-                gt_flow_t = torch.flip(gt_flow_t, dims=[1])
-                mask_t = torch.flip(mask_t, dims=[1])
-                gt_flow_t[1, :, :] *= -1.0 
 
             if random.random() > 0.5:
                 voxel_tensor = torch.flip(voxel_tensor, dims=[0, 1])

@@ -520,11 +520,6 @@ def main():
         for _ in range(args.start_epoch):
             scheduler.step()
 
-    # Use strict rigid transformations to preserve SNN spike density and physical scaling
-    co_transform = transforms.Compose([
-        transforms.RandomHorizontalFlip(0.5)
-    ])
-
     import glob
     dsec_files = glob.glob(os.path.join(args.dsec_train_dir, "*_data.hdf5"))
     
@@ -549,7 +544,6 @@ def main():
             args.dt,
             dataset_path,
             gt_path,
-            transform=co_transform,
             num_bins=args.num_bins
         )
         train_loader.append(
