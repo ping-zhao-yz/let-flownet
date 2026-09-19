@@ -259,9 +259,16 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
                 u_gt_all, v_gt_all, gt_ts_temp, ts_f.numpy(), ts_l.numpy())
             gt_flow = np.stack((u_gt, v_gt), axis=2)
 
-            # Mask derivation for Metric Calculation & Visualization
+            # ---> CRITICAL FIX: The Validation Mask <---
+            # Identify pixels where LiDAR successfully captured data
+            valid_gt_mask = (u_gt != 0.0) | (v_gt != 0.0)
+
+            # Identify pixels with events
             mask_tensor = torch.sum((event_data[0] != 0).float(), dim=(0, 3)).cpu()
-            mask_temp_np = mask_tensor.numpy() > 0
+            event_mask = mask_tensor.numpy() > 0
+            
+            # Only evaluate pixels that have BOTH events and valid LiDAR targets
+            mask_temp_np = event_mask & valid_gt_mask
 
             #   ----------- Visualization
             if epoch < 0 and not torch.cuda.is_available():
