@@ -23,7 +23,7 @@ from datasets.voxel.dataset_supervised import DatasetTestDSEC, DatasetTrainDSEC_
 from models import snn_raft
 from loss.loss_raft import sequence_loss
 from loss.metrics import estimate_corresponding_gt_flow, flow_error_dense
-from loss.loss_photometric import smooth_loss
+
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -39,8 +39,6 @@ parser.add_argument('--solver', default='adam', choices=['adam', 'sgd'],
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 
-parser.add_argument('--norm', default='BN',
-                    help='batch norm for Transformer layers. BN: BatchNorm2d; IN: InstanceNorm2d')
 
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
@@ -48,8 +46,6 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
 parser.add_argument('--tau', type=float, default=20e-3, choices=[20e-3, 50e-3, 100e-3],
                     help='time constant for Leaky Integrate and Fire (LIF) model: 20e-3 for dt=1, 50e-3 for dt=4, 100e-3 for dt=8')
 
-parser.add_argument('--num_enc_layers', type=int, default=2, help='number of transformer encoder layers')
-parser.add_argument('--num_dec_layers', type=int, default=2, help='number of transformer decoder layers')
 
 parser.add_argument('--no_mixed_precision', dest='mixed_precision', action='store_false',
                     help='disable mixed precision (default is ON)')
@@ -84,8 +80,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 vis_resolution = 256
 sp_threshold = args.sp_threshold
 
-div_flow = 20.0
-
 if args.train_host == 'local':
     base_dir = '/media/windows_data/code/research'
 else:
@@ -119,7 +113,6 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
         if isinstance(m, nn.BatchNorm2d):
             m.eval()
 
-    multiscale_weights = [0.01, 0.02, 0.08, 1.0]
     print_freq = 100
     valid_batches = 0
 
@@ -143,7 +136,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
 
             supervised_loss = sequence_loss(
                 flow_preds_fp32,
-                (gt_flow.to(device).float() / div_flow),
+                gt_flow.to(device).float(),
                 gt_mask.to(device).float(),
                 gamma=0.8,
                 print_details=print_details
@@ -151,9 +144,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
             loss_metric = supervised_loss
             loss_name = 'supervised_loss'
 
-            smoothness_loss = smooth_loss(flow_preds_fp32)
-            total_loss = loss_metric + smoothness_loss
-            loss = total_loss / accumulate_steps
+            loss = loss_metric / accumulate_steps
 
             # --- MIXED PRECISION BACKWARD PASS ---
             # The scaler will compute the loss gradients in safe FP32, and automatically 
@@ -172,13 +163,13 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
             # record loss and EPE (Multiply loss back up so TensorBoard graphs remain accurate)
             train_writer.add_scalar('train_loss/total_loss', loss.item() * accumulate_steps, iter_g)
             train_writer.add_scalar(f'train_loss/{loss_name}', loss_metric.item(), iter_g)
-            train_writer.add_scalar('train_loss/smoothness_loss', smoothness_loss.item(), iter_g)
+
                 
-            losses.update(total_loss.item(), event_data.size(0))
+            losses.update(loss_metric.item(), event_data.size(0))
 
             if print_details:
                 now = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M-%S")
-                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses.val:.2f}, {loss_name}: {loss_metric.item():.2f}, smoothness_loss: {smoothness_loss.item():.2f}')
+                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses.val:.2f}, {loss_name}: {loss_metric.item():.2f}')
                 print('-------------------------------------------------------')
 
             iter_g += 1
@@ -230,17 +221,9 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
             output_resized = torch.nn.functional.interpolate(
                 output_temp, size=(input_h, input_w), mode='bilinear', align_corners=False
             )
-
-            # ---> CRITICAL FIX: Scale the flow magnitude by the spatial upsample factor <---
-            scale_h = input_h / output_temp.size(2)
-            scale_w = input_w / output_temp.size(3)
-
-            # Only scale the translation parameters (v_x, v_y), NOT angular rotation (omega)
-            output_resized[:, 0, :, :] *= scale_w
-            output_resized[:, 1, :, :] *= scale_h
             
             # ---> Remove SE(2), Slice (u,v), and Apply Domain Scaling <---
-            pred_flow = (output_resized[0, :2, :, :] * div_flow).permute(1, 2, 0).numpy()
+            pred_flow = output_resized[0, :2, :, :].permute(1, 2, 0).numpy()
 
             u_gt_all = gt_temp[:, 0, :, :].copy()
             v_gt_all = gt_temp[:, 1, :, :].copy()
@@ -342,7 +325,7 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
 
             if i_batch < len(output_writers):  # log first output of first batches
                 output_writers[i_batch].add_image('Let FlowNet Outputs', flow2rgb(
-                    div_flow * output_temp[0, :2], max_value=10), epoch)
+                    output_temp[0, :2], max_value=10), epoch)
 
             iters += 1
 
@@ -440,7 +423,7 @@ def main():
 
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"=======================================================")
-    print(f"=> Architecture: {args.num_enc_layers} Encoder / {args.num_dec_layers} Decoder Layers")
+    print(f"=> Architecture: SNN-RAFT Hybrid (12 GRU Iterations)")
     print(f"=> Total Trainable Parameters: {total_params / 1e6:.2f} Million")
     print(f"=======================================================")
 
@@ -466,7 +449,8 @@ def main():
     # 1. Safely extract PLIF decay parameters via .module
     # (Ensures the SNN temporal memory parameters are isolated)
     alpha_params = [
-        model.module.alpha1, model.module.alpha2, model.module.alpha3, model.module.alpha4
+        model.module.fnet.alpha1, model.module.fnet.alpha2, model.module.fnet.alpha3,
+        model.module.cnet.alpha1, model.module.cnet.alpha2, model.module.cnet.alpha3
     ]
     alpha_param_ids = list(map(id, alpha_params))
 
@@ -608,7 +592,6 @@ def main():
                     'arch': arch,
                     'state_dict': model.module.state_dict(),
                     'best_EPE': best_EPE,
-                    'div_flow': div_flow,
                     'num_bins': args.num_bins
                 }, is_best, save_path, filename=filename)
 

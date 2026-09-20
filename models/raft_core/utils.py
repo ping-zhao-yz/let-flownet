@@ -77,6 +77,15 @@ def coords_grid(batch, ht, wd, device):
     return coords[None].repeat(batch, 1, 1, 1)
 
 
-def upflow8(flow, mode='bilinear'):
-    new_size = (8 * flow.shape[2], 8 * flow.shape[3])
-    return  8 * F.interpolate(flow, size=new_size, mode=mode, align_corners=True)
+def upsample_flow(flow, mask):
+    """ Upsample flow field [H/8, W/8, 2] -> [H, W, 2] using convex combination """
+    N, _, H, W = flow.shape
+    mask = mask.view(N, 1, 9, 8, 8, H, W)
+    mask = torch.softmax(mask, dim=2)
+
+    up_flow = F.unfold(8 * flow, [3,3], padding=1)
+    up_flow = up_flow.view(N, 2, 9, 1, 1, H, W)
+
+    up_flow = torch.sum(mask * up_flow, dim=2)
+    up_flow = up_flow.permute(0, 1, 4, 2, 5, 3)
+    return up_flow.reshape(N, 2, 8*H, 8*W)

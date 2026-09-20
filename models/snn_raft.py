@@ -9,7 +9,7 @@ from .base_model import BaseModel
 from .snn.spiking_lif import LIF_Neuron
 from .raft_core.update import BasicUpdateBlock
 from .raft_core.corr import CorrBlock
-from .raft_core.utils import coords_grid, upflow8
+from .raft_core.utils import coords_grid, upsample_flow
 
 class SNNEncoder(nn.Module):
     def __init__(self, args, batchNorm=True):
@@ -160,7 +160,8 @@ class SNN_RAFT(BaseModel):
             
             coords1 = coords1 + delta_flow
             
-            flow_up = upflow8(coords1 - coords0)
+            # ---> Apply Convex Upsampling <---
+            flow_up = upsample_flow(coords1 - coords0, up_mask)
             flow_predictions.append(flow_up)
 
         if test_mode:
