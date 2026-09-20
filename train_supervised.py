@@ -20,8 +20,8 @@ from util.loss_util import AverageMeter
 from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
 
 from datasets.voxel.dataset_supervised import DatasetTestDSEC, DatasetTrainDSEC_Supervised
-from models import let_flownet_voxel
-from loss.loss_supervised import supervised_loss_multiscale
+from models import snn_raft
+from loss.loss_raft import sequence_loss
 from loss.metrics import estimate_corresponding_gt_flow, flow_error_dense
 from loss.loss_photometric import smooth_loss
 import torch.nn as nn
@@ -93,7 +93,7 @@ else:
 
 save_dir = f'{base_dir}/outputs/let_flownet_voxel_multiscale_ilif_edc_loss_dt{args.dt}_output'
 
-arch = "let_flownet_voxel"
+arch = "snn_raft"
 
 epochs = 100
 iter_g = 0
@@ -141,12 +141,12 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler, accumulat
 
             flow_preds_fp32 = [f.float() for f in flow_predictions]
 
-            supervised_loss = supervised_loss_multiscale(
+            supervised_loss = sequence_loss(
                 flow_preds_fp32,
                 (gt_flow.to(device).float() / div_flow),
                 gt_mask.to(device).float(),
-                print_details,
-                weights=multiscale_weights
+                gamma=0.8,
+                print_details=print_details
             )
             loss_metric = supervised_loss
             loss_name = 'supervised_loss'
@@ -218,12 +218,8 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
         if torch.count_nonzero(voxel_tensor) > 0:
             event_data = voxel_tensor.to(device)
 
-            # compute output
-            output = model(event_data, sp_threshold)
-
-            # ---> Extract final scale if using Multi-Scale <---
-            if isinstance(output, list):
-                output = output[-1]  # Extract flow3 (the final 256x256 prediction)
+            # compute output (pass test_mode=True to return only final flow)
+            output = model(event_data, sp_threshold, test_mode=True)
 
             output_temp = output.cpu()
 
@@ -440,7 +436,7 @@ def main():
         network_data = None
         print(f"=> creating model '{arch}'")
 
-    model = let_flownet_voxel.__dict__[arch](args, device, network_data).to(device)
+    model = snn_raft.__dict__[arch](args, device, network_data).to(device)
 
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"=======================================================")
