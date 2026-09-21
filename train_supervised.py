@@ -455,8 +455,8 @@ def main():
     alpha_param_ids = list(map(id, alpha_params))
 
     # 2. Extract and filter bias/weight parameters to EXCLUDE the alpha params
-    bias_params = [p for p in model.module.bias_parameters() if id(p) not in alpha_param_ids]
-    weight_params = [p for p in model.module.weight_parameters() if id(p) not in alpha_param_ids]
+    bias_params = [p for n, p in model.module.named_parameters() if id(p) not in alpha_param_ids and p.ndim == 1]
+    weight_params = [p for n, p in model.module.named_parameters() if id(p) not in alpha_param_ids and p.ndim > 1]
 
     # ---> BACKWARD COMPATIBILITY: Dynamic SNN Learning Rate Scale <---
     # MVSEC and UZH-FPV keep the 0.01x bottleneck. DSEC gets full 1.0x velocity.
