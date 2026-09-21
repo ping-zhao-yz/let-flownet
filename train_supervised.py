@@ -85,7 +85,7 @@ if args.train_host == 'local':
 else:
     base_dir = '/scratch/let-flownet'
 
-save_dir = f'{base_dir}/outputs/let_flownet_voxel_multiscale_ilif_edc_loss_dt{args.dt}_output'
+save_dir = f'{base_dir}/outputs/let_flownet_raft_gru_dt{args.dt}_output'
 
 arch = "snn_raft"
 
