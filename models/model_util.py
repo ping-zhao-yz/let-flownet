@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as f
+import torch.nn.functional as F
 from math import ceil, floor
 
 
@@ -116,7 +116,7 @@ class UpsampleConvLayer(nn.Module):
             self.norm_layer = nn.InstanceNorm2d(out_channels, track_running_stats=True)
 
     def forward(self, x):
-        x_upsampled = f.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
+        x_upsampled = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
         out = self.conv2d(x_upsampled)
 
         if self.norm in ['BN', 'IN']:
