@@ -136,6 +136,18 @@ class Let_Flownet_Voxel(BaseModel):
             nn.init.normal_(m.weight, 0, 0.0001)
             nn.init.constant_(m.bias, 0)
 
+        # ---> RAFT-Style Iterative Flow Injection <---
+        self.flow_injs = nn.ModuleList([
+            nn.Conv2d(2, 64, kernel_size=3, padding=1),   # Matches blocks[0]
+            nn.Conv2d(2, 128, kernel_size=3, padding=1),  # Matches blocks[1]
+            nn.Conv2d(2, 256, kernel_size=3, padding=1),  # Matches blocks[2]
+            nn.Conv2d(2, 512, kernel_size=3, padding=1)   # Matches blocks[3]
+        ])
+        
+        for m in self.flow_injs:
+            nn.init.normal_(m.weight, 0, 0.0001)
+            nn.init.constant_(m.bias, 0)
+
     def encode_snn(self, input, sp_threshold):
         B, _, H, W, num_bins = input.size()
         threshold = sp_threshold
@@ -301,12 +313,12 @@ class Let_Flownet_Voxel(BaseModel):
         flow_b2 = F.interpolate(coarse_flow * 0.125, size=(H//8, W//8), mode='bilinear', align_corners=False)
         flow_b3 = F.interpolate(coarse_flow * 0.0625, size=(H//16, W//16), mode='bilinear', align_corners=False)
 
-        # Warp all 4 scale blocks using their perfectly matched flow grids
+        # Warp the visual features AND inject the embedded flow state
         warped_blocks = [
-            self.warp_features(blocks[0], flow_b0),
-            self.warp_features(blocks[1], flow_b1),
-            self.warp_features(blocks[2], flow_b2),
-            self.warp_features(blocks[3], flow_b3)
+            self.warp_features(blocks[0], flow_b0) + self.flow_injs[0](flow_b0),
+            self.warp_features(blocks[1], flow_b1) + self.flow_injs[1](flow_b1),
+            self.warp_features(blocks[2], flow_b2) + self.flow_injs[2](flow_b2),
+            self.warp_features(blocks[3], flow_b3) + self.flow_injs[3](flow_b3)
         ]
 
         # Step 4: Pass 2 (Fine Residual Estimation)
