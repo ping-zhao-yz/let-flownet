@@ -50,6 +50,8 @@ parser.add_argument('--tau', type=float, default=20e-3, choices=[20e-3, 50e-3, 1
 parser.add_argument('--num_enc_layers', type=int, default=2, help='number of transformer encoder layers')
 parser.add_argument('--num_dec_layers', type=int, default=2, help='number of transformer decoder layers')
 
+parser.add_argument('--iters', type=int, default=2, help='number of refinement iterations (set to 1 for single-pass models)')
+
 parser.add_argument('--no_mixed_precision', dest='mixed_precision', action='store_false',
                     help='disable mixed precision (default is ON)')
 parser.set_defaults(mixed_precision=True)
@@ -143,7 +145,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             # --- MIXED PRECISION FORWARD PASS ---
             with torch.amp.autocast('cuda', enabled=args.mixed_precision, dtype=torch.bfloat16):
                 # 1. Compute output (SNN + Transformer run in ultra-fast FP16)
-                flow_predictions = model(event_data, sp_threshold)
+                flow_predictions = model(event_data, sp_threshold, iters=args.iters)
 
             # --- FORCE LOSS CALCULATION TO FP32 ---
             # 2. Step OUTSIDE the autocast block and explicitly cast to float32.
@@ -236,7 +238,7 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
             event_data = voxel_tensor.to(device)
 
             # compute output
-            output = model(event_data, sp_threshold)
+            output = model(event_data, sp_threshold, iters=args.iters)
 
             # ---> Extract final scale if using Multi-Scale <---
             if isinstance(output, list):
