@@ -99,8 +99,12 @@ test_env = args.test_env
 # UZH-FPV and MVSEC share the same validation dataset; UZH-FPV doesn't use training dataset configuration here
 src_file_dir = f'{base_dir}/dataset/Event/mvsec/original'
 train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
-test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
-test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
+test_envs = [env.strip() for env in test_env.split(',')]
+test_file_pairs = []
+for t_env in test_envs:
+    t_src_file = f'{src_file_dir}/{t_env}/{t_env}_data.hdf5'
+    t_gt_file = f'{src_file_dir}/{t_env}/{t_env}_gt.hdf5'
+    test_file_pairs.append((t_src_file, t_gt_file, t_env))
 
 save_dir = f'{base_dir}/outputs/let_flownet_voxel_multipass_trans_dt{args.dt}_output'
 
@@ -196,7 +200,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     return losses.avg
 
 
-def validate(test_loader, model, epoch, output_writers, current_test_src_file, current_test_gt_file):
+def validate(test_loader, model, epoch, output_writers, current_test_src_file, current_test_gt_file, current_test_env):
     global args, vis_resolution, sp_threshold
     d_label = h5py.File(current_test_gt_file, 'r')
     gt_temp = np.float32(d_label['davis']['left']['flow_dist'])
@@ -224,7 +228,7 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
         voxel_tensor, ts_f, ts_l = data
 
         # Only for outdoor_day1, limit to 800 frames to match Spike-FlowNet
-        if 'outdoor_day1' in test_env and i_batch >= 800:
+        if 'outdoor_day1' in current_test_env and i_batch >= 800:
             break
 
         # check if there are any non-zero elements
@@ -335,7 +339,7 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
 
             gt_flow = gt_flow[yoff : yoff + ycrop, xoff : xoff + xcrop, :]
 
-            is_car_flag = 'outdoor' in test_env
+            is_car_flag = 'outdoor' in current_test_env
 
             epe, ae, pe1, pe2, pe3, n_points = flow_error_dense(gt_flow, pred_flow, mask_temp_np, is_car=is_car_flag)
 
@@ -381,11 +385,8 @@ def main():
     best_EPE = -1
     val_fail_times = 0
 
-    test_file_pairs = []
-    test_file_pairs.append((test_src_file, test_gt_file))
-
     test_loaders = []
-    for t_src, t_gt in test_file_pairs:
+    for t_src, t_gt, t_env in test_file_pairs:
         with h5py.File(t_gt, 'r') as d_label:
             gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
             
@@ -401,7 +402,7 @@ def main():
             num_workers=workers,
             multiprocessing_context='spawn'
         )
-        test_loaders.append((t_loader, t_src, t_gt))
+        test_loaders.append((t_loader, t_src, t_gt, t_env))
         
     print(f"=> Created {len(test_loaders)} validation loader(s).")
 
@@ -448,8 +449,8 @@ def main():
     if args.evaluate:
         with torch.no_grad():
             total_EPE = 0
-            for t_loader, t_src, t_gt in test_loaders:
-                total_EPE += validate(t_loader, model, -1, output_writers, t_src, t_gt)
+            for t_loader, t_src, t_gt, t_env in test_loaders:
+                total_EPE += validate(t_loader, model, -1, output_writers, t_src, t_gt, t_env)
             mean_EPE = total_EPE / len(test_loaders)
             if len(test_loaders) > 1:
                 print(f'================ Overall Validation Outcome ===================')
@@ -605,8 +606,8 @@ def main():
             # evaluate on validation set
             with torch.no_grad():
                 total_EPE = 0
-                for t_loader, t_src, t_gt in test_loaders:
-                    total_EPE += validate(t_loader, model, epoch, output_writers, t_src, t_gt)
+                for t_loader, t_src, t_gt, t_env in test_loaders:
+                    total_EPE += validate(t_loader, model, epoch, output_writers, t_src, t_gt, t_env)
                 EPE = total_EPE / len(test_loaders)
             if len(test_loaders) > 1:
                 print(f'================ Overall Validation Outcome (Epoch {epoch}) ===================')
