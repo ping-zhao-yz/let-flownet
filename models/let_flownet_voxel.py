@@ -148,6 +148,28 @@ class Let_Flownet_Voxel(BaseModel):
             nn.init.normal_(m.weight, 0, 0.0001)
             nn.init.constant_(m.bias, 0)
 
+        # ---> ASYMMETRIC ITERATION: Tiny Transformer Refiner (Operates at H/8) <---
+        self.tiny_d_model = 128
+        self.tiny_proj = nn.Conv2d(256, self.tiny_d_model, kernel_size=3, padding=1)
+        self.tiny_pos = build_position_encoding('sine', self.tiny_d_model)
+        
+        # A single, hyper-fast self-attention layer for residual calculation
+        self.tiny_encoder = transformer_encoder(
+            d_model=self.tiny_d_model, nhead=4, num_encoder_layers=1, 
+            dim_feedforward=256, activation='relu', dropout=0.0
+        )
+        
+        # Lightweight CNN upsampler to scale the H/8 residual back to H/2
+        self.tiny_up = nn.Sequential(
+            UpsampleConvLayer(in_channels=self.tiny_d_model, out_channels=64, kernel_size=3, stride=1, padding=1, norm=norm),
+            UpsampleConvLayer(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1, norm=norm),
+            nn.Conv2d(32, 2, kernel_size=3, padding=1)
+        )
+        
+        # Initialize Tiny Refiner output to near-zero so it starts as an Identity function
+        nn.init.normal_(self.tiny_up[-1].weight, 0, 1e-5)
+        nn.init.constant_(self.tiny_up[-1].bias, 0)
+
     def encode_snn(self, input, sp_threshold):
         B, _, H, W, num_bins = input.size()
         threshold = sp_threshold
@@ -296,44 +318,46 @@ class Let_Flownet_Voxel(BaseModel):
         # Step 1: SNN extracts temporal features once
         blocks = self.encode_snn(input, sp_threshold)
 
-        # Step 2: Pass 1 (Coarse Estimation)
+        # Step 2: Pass 1 (Global Coarse Estimation)
         flows_p1 = self.decode_flow(blocks, H, W)
         
         if iters == 1:
             return flows_p1
 
-        # Step 3: Feature Warping via grid_sample
-        # flows_p1[-1] (flow3) has shape [B, 2 or 3, H//2, W//2]
-        # Slice :2 to isolate 2D translation vectors (u, v)
-        coarse_flow = flows_p1[-1][:, :2].detach()
+        # Base coarse flow from Pass 1 (Shape: B, 2, H//2, W//2)
+        flow_current = flows_p1[-1][:, :2].detach()
 
-        # Scale flow magnitude and resize for each specific SNN block dimension
-        flow_b0 = F.interpolate(coarse_flow * 0.5, size=(H//2, W//2), mode='bilinear', align_corners=False)
-        flow_b1 = F.interpolate(coarse_flow * 0.25, size=(H//4, W//4), mode='bilinear', align_corners=False)
-        flow_b2 = F.interpolate(coarse_flow * 0.125, size=(H//8, W//8), mode='bilinear', align_corners=False)
-        flow_b3 = F.interpolate(coarse_flow * 0.0625, size=(H//16, W//16), mode='bilinear', align_corners=False)
+        # Step 3: N-Pass Tiny Iterative Refinement
+        for i in range(iters - 1):
+            # Scale current flow to H/8 to match blocks[2]
+            flow_b2 = F.interpolate(flow_current * 0.125, size=(H//8, W//8), mode='bilinear', align_corners=False)
+            
+            # Warp blocks[2] and inject the flow state
+            warped_b2 = self.warp_features(blocks[2], flow_b2) + self.flow_injs[2](flow_b2)
 
-        # Warp the visual features AND inject the embedded flow state
-        warped_blocks = [
-            self.warp_features(blocks[0], flow_b0) + self.flow_injs[0](flow_b0),
-            self.warp_features(blocks[1], flow_b1) + self.flow_injs[1](flow_b1),
-            self.warp_features(blocks[2], flow_b2) + self.flow_injs[2](flow_b2),
-            self.warp_features(blocks[3], flow_b3) + self.flow_injs[3](flow_b3)
-        ]
+            # Tiny Transformer Self-Attention
+            token_tiny = self.tiny_proj(warped_b2).flatten(2).transpose(1, 2)
+            pos_tiny = self.tiny_pos(token_tiny)
+            hs_tiny = self.tiny_encoder(src=token_tiny.transpose(0, 1), pos=pos_tiny.transpose(0, 1))
+            
+            # Reshape tokens back to 2D image (H//8, W//8)
+            hc_img = rearrange(hs_tiny, '(h w) n c -> n c h w', h=H//8, w=W//8)
 
-        # Step 4: Pass 2 (Fine Residual Estimation)
-        flows_res = self.decode_flow(warped_blocks, H, W)
+            # Upsample the hidden state to predict Delta Flow at H/2
+            delta_flow = self.tiny_up(hc_img)
+            
+            # Accumulate the residual
+            flow_current = flow_current + delta_flow
 
-        # Step 5: Add coarse flow to the predicted residual
-        final_flows = [
-            flows_p1[0] + flows_res[0],
-            flows_p1[1] + flows_res[1],
-            flows_p1[2] + flows_res[2],
-            flows_p1[3] + flows_res[3]
-        ]
+        # Step 4: Reconstruct multi-scale output for the loss function
+        # Keep the 3rd channel (if it exists) from Pass 1's final output
+        if flows_p1[-1].size(1) > 2:
+            final_flow_h2 = torch.cat([flow_current, flows_p1[-1][:, 2:]], dim=1)
+        else:
+            final_flow_h2 = flow_current
 
-        # Returns multi-scale outputs for loss supervision
-        return final_flows
+        # Return Pass 1 coarse scales for native multi-scale supervision, plus the iteratively refined H/2 flow
+        return [flows_p1[0], flows_p1[1], flows_p1[2], final_flow_h2]
 
     def weight_parameters(self):
         return [param for name, param in self.named_parameters() if 'weight' in name]
