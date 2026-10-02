@@ -325,7 +325,7 @@ class Let_Flownet_Voxel(BaseModel):
             return flows_p1
 
         # Base coarse flow from Pass 1 (Shape: B, 2, H//2, W//2)
-        flow_current = flows_p1[-1][:, :2].detach()
+        flow_current = flows_p1[-2][:, :2].detach()
 
         # Step 3: N-Pass Tiny Iterative Refinement
         for i in range(iters - 1):
@@ -350,9 +350,9 @@ class Let_Flownet_Voxel(BaseModel):
             flow_current = flow_current + delta_flow
 
         # Step 4: Reconstruct multi-scale output for the loss function
-        # Keep the 3rd channel (if it exists) from Pass 1's final output
-        if flows_p1[-1].size(1) > 2:
-            final_flow_h2 = torch.cat([flow_current, flows_p1[-1][:, 2:]], dim=1)
+        # Keep the 3rd channel (if it exists) from Pass 1's true_flow2 output
+        if flows_p1[-2].size(1) > 2:
+            final_flow_h2 = torch.cat([flow_current, flows_p1[-2][:, 2:]], dim=1)
         else:
             final_flow_h2 = flow_current
 
