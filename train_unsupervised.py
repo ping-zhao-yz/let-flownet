@@ -144,29 +144,54 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
 
             # --- MIXED PRECISION FORWARD PASS ---
             with torch.amp.autocast('cuda', enabled=args.mixed_precision, dtype=torch.bfloat16):
-                # 1. Compute output (SNN + Transformer run in ultra-fast FP16)
-                flow_predictions = model(event_data, sp_threshold, iters=args.iters)
+                flows_p1, flow_sequence = model(event_data, sp_threshold, iters=args.iters)
 
             # --- FORCE LOSS CALCULATION TO FP32 ---
-            # 2. Step OUTSIDE the autocast block and explicitly cast to float32.
-            # This prevents grid_sample and division underflow NaNs in the loss!
-            flow_preds_fp32 = [f.float() for f in flow_predictions]
+            flows_p1_fp32 = [f.float() for f in flows_p1]
+            seq_fp32 = [f.float() for f in flow_sequence]
 
+            former_gray_tensor = former_gray[:, 0, :, :].to(device).float()
+            latter_gray_tensor = latter_gray[:, 0, :, :].to(device).float()
             event_mask = (torch.sum((event_data != 0).float(), dim=(1, 4)) > 0).float()
 
-            photometric_loss = photometric_loss_multiscale(
-                former_gray[:, 0, :, :].to(device).float(), 
-                latter_gray[:, 0, :, :].to(device).float(), 
+            # 1. Base Multi-Scale Loss for the Coarse Global Pass
+            loss_coarse = photometric_loss_multiscale(
+                former_gray_tensor,
+                latter_gray_tensor,
                 event_mask, 
-                flow_preds_fp32, 
-                device, 
-                print_details, 
-                weights=multiscale_weights
+                flows_p1_fp32,
+                device,
+                print_details,
+                weights=[0.01, 0.02, 0.08, 0.2]
             )
-            loss_metric = photometric_loss
-            loss_name = 'photometric_loss'
 
-            smoothness_loss = smooth_loss(flow_preds_fp32)
+            # 2. RAFT Sequence Loss for the Refinement Passes
+            loss_seq = 0.0
+            gamma = 0.8
+            n_predictions = len(seq_fp32)
+            
+            for i, f_pred in enumerate(seq_fp32):
+                # Calculate RAFT exponential weight: gamma^(N - i - 1)
+                i_weight = gamma ** (n_predictions - i - 1)
+                
+                # Trick the multiscale function into evaluating a single scale
+                i_loss = photometric_loss_multiscale(
+                    former_gray_tensor,
+                    latter_gray_tensor,
+                    event_mask,
+                    [f_pred],
+                    device,
+                    print_details=False,
+                    weights=[1.0]
+                )
+                loss_seq += i_weight * i_loss
+
+            loss_metric = loss_coarse + loss_seq
+            loss_metric_name = 'photometric_loss'
+
+            # Calculate smoothness on the very last refined flow
+            smoothness_loss = smooth_loss([seq_fp32[-1]])
+            
             loss = loss_metric + smoothness_loss
 
             optimizer.zero_grad()
@@ -186,14 +211,14 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
 
             # record loss and EPE
             train_writer.add_scalar('train_loss/total_loss', loss.item(), iter_g)
-            train_writer.add_scalar(f'train_loss/{loss_name}', loss_metric.item(), iter_g)
+            train_writer.add_scalar(f'train_loss/{loss_metric_name}', loss_metric.item(), iter_g)
             train_writer.add_scalar('train_loss/smoothness_loss', smoothness_loss.item(), iter_g)
                 
             losses.update(loss.item(), event_data.size(0))
 
             if print_details:
                 now = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M-%S")
-                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses.val:.2f}, {loss_name}: {loss_metric.item():.2f}, smoothness_loss: {smoothness_loss.item():.2f}')
+                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses.val:.2f}, {loss_metric_name}: {loss_metric.item():.2f}, smoothness_loss: {smoothness_loss.item():.2f}')
                 print('-------------------------------------------------------')
 
             iter_g += 1

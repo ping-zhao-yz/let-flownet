@@ -328,6 +328,7 @@ class Let_Flownet_Voxel(BaseModel):
         flow_current = flows_p1[-2][:, :2].detach()
 
         # Step 3: N-Pass Tiny Iterative Refinement
+        flow_sequence = []
         for i in range(iters - 1):
             # Scale current flow to H/8 to match blocks[2]
             flow_b2 = F.interpolate(flow_current * 0.125, size=(H//8, W//8), mode='bilinear', align_corners=False)
@@ -348,16 +349,16 @@ class Let_Flownet_Voxel(BaseModel):
             
             # Accumulate the residual
             flow_current = flow_current + delta_flow
+            flow_sequence.append(flow_current)
 
-        # Step 4: Reconstruct multi-scale output for the loss function
-        # Keep the 3rd channel (if it exists) from Pass 1's true_flow2 output
-        if flows_p1[-2].size(1) > 2:
-            final_flow_h2 = torch.cat([flow_current, flows_p1[-2][:, 2:]], dim=1)
-        else:
-            final_flow_h2 = flow_current
+        # Step 4: Routing based on Training vs Eval
+        if not self.training:
+            # During validation, return the standard 4-scale format using only the final refinement
+            final_flow = torch.cat([flow_current, flows_p1[-2][:, 2:]], dim=1) if flows_p1[-2].size(1) > 2 else flow_current
+            return [flows_p1[0], flows_p1[1], flows_p1[2], final_flow]
 
-        # Return Pass 1 coarse scales for native multi-scale supervision, plus the iteratively refined H/2 flow
-        return [flows_p1[0], flows_p1[1], flows_p1[2], final_flow_h2]
+        # During training, return the coarse scales AND the entire sequence of refinements
+        return flows_p1, flow_sequence
 
     def weight_parameters(self):
         return [param for name, param in self.named_parameters() if 'weight' in name]
