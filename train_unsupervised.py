@@ -50,7 +50,7 @@ parser.add_argument('--tau', type=float, default=20e-3, choices=[20e-3, 50e-3, 1
 parser.add_argument('--num_enc_layers', type=int, default=2, help='number of transformer encoder layers')
 parser.add_argument('--num_dec_layers', type=int, default=2, help='number of transformer decoder layers')
 
-parser.add_argument('--iters', type=int, default=12, help='number of refinement iterations (set to 1 for single-pass models)')
+parser.add_argument('--iters', type=int, default=8, help='number of refinement iterations (set to 0 for single-pass models)')
 
 parser.add_argument('--no_mixed_precision', dest='mixed_precision', action='store_false',
                     help='disable mixed precision (default is ON)')

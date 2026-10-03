@@ -321,7 +321,7 @@ class Let_Flownet_Voxel(BaseModel):
         # Step 2: Pass 1 (Global Coarse Estimation)
         flows_p1 = self.decode_flow(blocks, H, W)
         
-        if iters == 1:
+        if iters == 0:
             return flows_p1
 
         # Base coarse flow from Pass 1 (Shape: B, 2, H//2, W//2)
@@ -329,7 +329,7 @@ class Let_Flownet_Voxel(BaseModel):
 
         # Step 3: N-Pass Tiny Iterative Refinement
         flow_sequence = []
-        for i in range(iters - 1):
+        for i in range(iters):
             # Scale current flow to H/8 to match blocks[2]
             flow_b2 = F.interpolate(flow_current * 0.125, size=(H//8, W//8), mode='bilinear', align_corners=False)
             
