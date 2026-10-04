@@ -324,9 +324,9 @@ class Let_Flownet_Voxel(BaseModel):
         if iters == 0:
             return flows_p1
 
-        # Base coarse flow from Pass 1: select true top coarse flow (flow3 at H//2)
+        # Base coarse flow from Pass 1: select true H/2 coarse flow (true_flow2 at 128x128)
         # Keep graph attached so sequence loss gradients flow back into SNN & TPA backbone
-        flow_current = flows_p1[-1][:, :2]
+        flow_current = flows_p1[-2][:, :2]
 
         # Step 3: N-Pass Tiny Iterative Refinement
         flow_sequence = []
@@ -353,10 +353,9 @@ class Let_Flownet_Voxel(BaseModel):
             flow_sequence.append(flow_current)
 
         if not self.training:
-            # During validation, return the standard 4-scale format using only the final refinement
-            # flow_current is [B, 2, H//2, W//2]; concatenate omega if flow3 has 3 channels
-            if flows_p1[-1].size(1) > 2:
-                final_flow = torch.cat([flow_current, flows_p1[-1][:, 2:]], dim=1)
+            # During validation, return the standard 4-scale format using the final refinement at H/2
+            if flows_p1[-2].size(1) > 2:
+                final_flow = torch.cat([flow_current, flows_p1[-2][:, 2:]], dim=1)
             else:
                 final_flow = flow_current
             return [flows_p1[0], flows_p1[1], flows_p1[2], final_flow]

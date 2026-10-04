@@ -144,7 +144,12 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
 
             # --- MIXED PRECISION FORWARD PASS ---
             with torch.amp.autocast('cuda', enabled=args.mixed_precision, dtype=torch.bfloat16):
-                flows_p1, flow_sequence = model(event_data, sp_threshold, iters=args.iters)
+                output = model(event_data, sp_threshold, iters=args.iters)
+                if args.iters == 0:
+                    flows_p1 = output
+                    flow_sequence = []
+                else:
+                    flows_p1, flow_sequence = output
 
             # --- FORCE LOSS CALCULATION TO FP32 ---
             flows_p1_fp32 = [f.float() for f in flows_p1]
@@ -172,7 +177,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             
             for i, f_pred in enumerate(seq_fp32):
                 # Calculate RAFT exponential weight: gamma^(N - i - 1)
-                i_weight = gamma ** (n_predictions - i - 1)
+                i_weight = (gamma ** (n_predictions - i - 1)) / n_predictions
                 
                 # Trick the multiscale function into evaluating a single scale
                 i_loss = photometric_loss_multiscale(
@@ -182,15 +187,19 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                     [f_pred],
                     device,
                     print_details=False,
-                    weights=[1.0]
+                    weights=[0.2]
                 )
                 loss_seq += i_weight * i_loss
 
             loss_metric = loss_coarse + loss_seq
             loss_metric_name = 'photometric_loss'
 
-            # Calculate smoothness on the very last refined flow
-            smoothness_loss = smooth_loss([seq_fp32[-1]])
+            # Calculate smoothness on the very last refined flow scaled to native 256x256 resolution
+            if len(seq_fp32) > 0:
+                refined_flow_full = F.interpolate(seq_fp32[-1] * 2.0, scale_factor=2, mode='bilinear', align_corners=False)
+                smoothness_loss = smooth_loss([refined_flow_full])
+            else:
+                smoothness_loss = smooth_loss([flows_p1_fp32[-1][:, :2]])
             
             loss = loss_metric + smoothness_loss
 
@@ -500,8 +509,8 @@ def main():
     weight_params = [p for p in model.module.weight_parameters() if id(p) not in alpha_param_ids]
 
     # ---> BACKWARD COMPATIBILITY: Dynamic SNN Learning Rate Scale <---
-    # MVSEC and UZH-FPV keep the 0.01x bottleneck. DSEC gets full 1.0x velocity.
-    snn_lr_scale = 0.01
+    # Allow PLIF alpha parameters to adapt actively during warmup and early epochs
+    snn_lr_scale = 0.1
 
     if args.solver == 'adam':
         optimizer = torch.optim.Adam([
@@ -610,13 +619,16 @@ def main():
             # Shuffle the order we read the HDF5 sequence files every epoch
             random.shuffle(train_loader)
             
-            epoch_loss = 0
+            total_loss_sum = 0.0
+            total_samples = 0
             for loader in train_loader:
                 # Train fully on one file before moving to the next
                 loss = train(loader, model, optimizer, epoch, train_writer, scaler)
-                epoch_loss += loss
+                num_samples = len(loader.dataset)
+                total_loss_sum += loss * num_samples
+                total_samples += num_samples
             
-            train_loss = epoch_loss / len(train_loader)
+            train_loss = total_loss_sum / max(total_samples, 1)
         else:
             # Standard MVSEC single-loader logic
             train_loss = train(train_loader, model, optimizer, epoch, train_writer, scaler)
