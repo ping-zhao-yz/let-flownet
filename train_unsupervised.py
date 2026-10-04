@@ -246,8 +246,9 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
     d_set = h5py.File(current_test_src_file, 'r')
     gray_image = d_set['davis']['left']['image_raw']
 
-    # switch to evaluate mode
-    model.eval()
+    # switch to evaluate mode (use underlying module to prevent DataParallel batch_size=1 scatter crash)
+    eval_model = model.module if isinstance(model, torch.nn.DataParallel) else model
+    eval_model.eval()
 
     epe_sum = 0.
     ae_sum = 0.
@@ -271,8 +272,8 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
         if torch.count_nonzero(voxel_tensor) > 0:
             event_data = voxel_tensor.to(device)
 
-            # compute output
-            output = model(event_data, sp_threshold, iters=args.iters)
+            # compute output directly on primary device
+            output = eval_model(event_data, sp_threshold, iters=args.iters)
 
             # ---> Extract final scale if using Multi-Scale <---
             if isinstance(output, list):
@@ -608,7 +609,7 @@ def main():
             train_loader.append(single_loader)
 
     # Initialize Mixed Precision Scaler
-    scaler = torch.amp.GradScaler('cuda', enabled=args.mixed_precision)
+    scaler = torch.amp.GradScaler('cuda', enabled=False)
 
     for epoch in range(args.start_epoch, epochs):
 
@@ -657,9 +658,10 @@ def main():
 
             if best_EPE < 0:
                 best_EPE = EPE
-
-            is_best = EPE < best_EPE
-            best_EPE = min(EPE, best_EPE)
+                is_best = True
+            else:
+                is_best = EPE < best_EPE
+                best_EPE = min(EPE, best_EPE)
 
             if EPE < args.save_thred:
                 filename = f'checkpoint_epoch_{epoch + 1}_{EPE}.pth.tar'
