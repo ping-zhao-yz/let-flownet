@@ -137,16 +137,10 @@ class Let_Flownet_Voxel(BaseModel):
             nn.init.constant_(m.bias, 0)
 
         # ---> RAFT-Style Iterative Flow Injection <---
-        self.flow_injs = nn.ModuleList([
-            nn.Conv2d(2, 64, kernel_size=3, padding=1),   # Matches blocks[0]
-            nn.Conv2d(2, 128, kernel_size=3, padding=1),  # Matches blocks[1]
-            nn.Conv2d(2, 256, kernel_size=3, padding=1),  # Matches blocks[2]
-            nn.Conv2d(2, 512, kernel_size=3, padding=1)   # Matches blocks[3]
-        ])
-        
-        for m in self.flow_injs:
-            nn.init.normal_(m.weight, 0, 0.0001)
-            nn.init.constant_(m.bias, 0)
+        # ---> RAFT-Style Iterative Flow Injection (Operates specifically at blocks[2] / H/8) <---
+        self.flow_inj = nn.Conv2d(2, 256, kernel_size=3, padding=1)
+        nn.init.normal_(self.flow_inj.weight, 0, 0.0001)
+        nn.init.constant_(self.flow_inj.bias, 0)
 
         # ---> ASYMMETRIC ITERATION: Tiny Transformer Refiner (Operates at H/8) <---
         self.tiny_d_model = 128
@@ -335,7 +329,7 @@ class Let_Flownet_Voxel(BaseModel):
             flow_b2 = F.interpolate(flow_current * 0.25, size=(H//8, W//8), mode='bilinear', align_corners=False)
             
             # Warp blocks[2] and inject the flow state
-            warped_b2 = self.warp_features(blocks[2], flow_b2) + self.flow_injs[2](flow_b2)
+            warped_b2 = self.warp_features(blocks[2], flow_b2) + self.flow_inj(flow_b2)
 
             # Tiny Transformer Self-Attention
             token_tiny = self.tiny_proj(warped_b2).flatten(2).transpose(1, 2)

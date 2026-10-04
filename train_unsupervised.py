@@ -125,7 +125,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     # switch to train mode
     model.train()
 
-    multiscale_weights = [0.01, 0.02, 0.08, 1.0]
+    multiscale_weights = [0.01, 0.02, 0.08, 0.2]
     print_freq = 100
     valid_batches = 0
 
@@ -167,7 +167,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                 flows_p1_fp32,
                 device,
                 print_details,
-                weights=[0.01, 0.02, 0.08, 0.2]
+                weights=multiscale_weights
             )
 
             # 2. RAFT Sequence Loss for the Refinement Passes
@@ -227,7 +227,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
 
             if print_details:
                 now = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M-%S")
-                print(f'Time: {now}, Epoch: [{epoch}][{batch_size * i_batch}/{batch_size * len(train_loader)}], Loss: {losses.val:.2f}, {loss_metric_name}: {loss_metric.item():.2f}, smoothness_loss: {smoothness_loss.item():.2f}')
+                print(f'Time: {now}, Epoch: [{epoch}][{i_batch}/{len(train_loader)}], Loss: {losses.val:.2f}, {loss_metric_name}: {loss_metric.item():.2f}, smoothness_loss: {smoothness_loss.item():.2f}')
                 print('-------------------------------------------------------')
 
             iter_g += 1
