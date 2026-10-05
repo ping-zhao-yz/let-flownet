@@ -144,7 +144,7 @@ class Let_Flownet_Voxel(BaseModel):
 
         # ---> ASYMMETRIC ITERATION: Tiny Transformer Refiner (Operates at H/8) <---
         self.tiny_d_model = 128
-        self.tiny_proj = nn.Conv2d(256, self.tiny_d_model, kernel_size=3, padding=1)
+        self.tiny_proj = nn.Conv2d(512, self.tiny_d_model, kernel_size=3, padding=1)
         self.tiny_pos = build_position_encoding('sine', self.tiny_d_model)
         
         # A single, hyper-fast self-attention layer for residual calculation
@@ -328,11 +328,14 @@ class Let_Flownet_Voxel(BaseModel):
             # Scale current flow to H/8 to match blocks[2]
             flow_b2 = F.interpolate(flow_current * 0.25, size=(H//8, W//8), mode='bilinear', align_corners=False)
             
-            # Warp blocks[2] and inject the flow state
+            # 1. Warped deformed state
             warped_b2 = self.warp_features(blocks[2], flow_b2) + self.flow_inj(flow_b2)
 
+            # 2. Concat with original static anchor (blocks[2]) so the Transformer can measure discrepancy
+            refiner_in = torch.cat([blocks[2], warped_b2], dim=1)  # [B, 512, H//8, W//8]
+
             # Tiny Transformer Self-Attention
-            token_tiny = self.tiny_proj(warped_b2).flatten(2).transpose(1, 2)
+            token_tiny = self.tiny_proj(refiner_in).flatten(2).transpose(1, 2)
             pos_tiny = self.tiny_pos(token_tiny)
             hs_tiny = self.tiny_encoder(src=token_tiny.transpose(0, 1), pos=pos_tiny.transpose(0, 1))
             
