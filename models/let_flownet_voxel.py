@@ -144,7 +144,8 @@ class Let_Flownet_Voxel(BaseModel):
 
         # ---> ASYMMETRIC ITERATION: Tiny Transformer Refiner (Operates at H/8) <---
         self.tiny_d_model = 128
-        self.tiny_proj = nn.Conv2d(512, self.tiny_d_model, kernel_size=3, padding=1)
+        # 256 (feature difference) + 2 (current flow coordinate field)
+        self.tiny_proj = nn.Conv2d(258, self.tiny_d_model, kernel_size=3, padding=1)
         self.tiny_pos = build_position_encoding('sine', self.tiny_d_model)
         
         # A single, hyper-fast self-attention layer for residual calculation
@@ -328,11 +329,14 @@ class Let_Flownet_Voxel(BaseModel):
             # Scale current flow to H/8 to match blocks[2]
             flow_b2 = F.interpolate(flow_current * 0.25, size=(H//8, W//8), mode='bilinear', align_corners=False)
             
-            # 1. Warped deformed state
+            # 1. Warped deformed state with iterative flow injection
             warped_b2 = self.warp_features(blocks[2], flow_b2) + self.flow_inj(flow_b2)
 
-            # 2. Concat with original static anchor (blocks[2]) so the Transformer can measure discrepancy
-            refiner_in = torch.cat([blocks[2], warped_b2], dim=1)  # [B, 512, H//8, W//8]
+            # 2. Explicit alignment difference map
+            diff_b2 = blocks[2] - warped_b2
+
+            # 3. Concatenate feature residual with current flow state [B, 258, H//8, W//8]
+            refiner_in = torch.cat([diff_b2, flow_b2], dim=1)
 
             # Tiny Transformer Self-Attention
             token_tiny = self.tiny_proj(refiner_in).flatten(2).transpose(1, 2)
@@ -345,8 +349,8 @@ class Let_Flownet_Voxel(BaseModel):
             # Upsample the hidden state to predict Delta Flow at H/2
             delta_flow = self.tiny_up(hc_img)
             
-            # Accumulate the residual
-            flow_current = flow_current + delta_flow
+            # 4. Truncate compounding second-order warping gradients while keeping current step differentiable
+            flow_current = flow_current.detach() + delta_flow
             flow_sequence.append(flow_current)
 
         if not self.training:
