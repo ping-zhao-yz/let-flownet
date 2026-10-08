@@ -349,8 +349,14 @@ class Let_Flownet_Voxel(BaseModel):
             # Upsample the hidden state to predict Delta Flow at H/2
             delta_flow = self.tiny_up(hc_img)
             
-            # 4. Truncate compounding second-order warping gradients while keeping current step differentiable
-            flow_current = flow_current.detach() + delta_flow
+            # 4. TRUNCATE RECURRENCE ONLY AFTER ITERATION 0:
+            if i == 0:
+                # Step 0: flow_current is fully connected to flows_p1, allowing loss_seq to train the backbone
+                flow_current = flow_current + delta_flow
+            else:
+                # Step 1+: detach past flow accumulation to prevent compounding warping gradients
+                flow_current = flow_current.detach() + delta_flow
+
             flow_sequence.append(flow_current)
 
         if not self.training:
