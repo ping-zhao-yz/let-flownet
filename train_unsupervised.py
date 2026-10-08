@@ -414,9 +414,27 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
 
 
 def main():
-    global args
-    # Initializations
-    print(f"=> using device '{device}'")
+    global args, device, is_distributed, is_main_process, local_rank
+    
+    # ------------------ DYNAMIC DISTRIBUTED / SINGLE-GPU SETUP ------------------
+    is_distributed = "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1
+    
+    if is_distributed:
+        import torch.distributed as dist
+        dist.init_process_group(backend='nccl')
+        local_rank = int(os.environ["LOCAL_RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        torch.cuda.set_device(local_rank)
+        device = torch.device(f"cuda:{local_rank}")
+    else:
+        local_rank = 0
+        world_size = 1
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    is_main_process = (local_rank == 0)
+    if is_main_process:
+        print(f"=> Distributed: {is_distributed} (World Size: {world_size}), Device: {device}")
+    # -----------------------------------------------------------------------------
 
     workers = 8
     best_EPE = -1
@@ -474,12 +492,16 @@ def main():
     model = let_flownet_voxel.__dict__[arch](args, device, network_data).to(device)
 
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"=======================================================")
-    print(f"=> Architecture: {args.num_enc_layers} Encoder / {args.num_dec_layers} Decoder Layers")
-    print(f"=> Total Trainable Parameters: {total_params / 1e6:.2f} Million")
-    print(f"=======================================================")
+    if is_main_process:
+        print(f"=======================================================")
+        print(f"=> Architecture: {args.num_enc_layers} Encoder / {args.num_dec_layers} Decoder Layers")
+        print(f"=> Total Trainable Parameters: {total_params / 1e6:.2f} Million")
+        print(f"=======================================================")
 
-    model = torch.nn.DataParallel(model).to(device)
+    model = model.to(device)
+    if is_distributed:
+        from torch.nn.parallel import DistributedDataParallel as DDP
+        model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False)
 
     cudnn.benchmark = True
 
@@ -589,23 +611,37 @@ def main():
         # Initialize individual DatasetTrain objects and store them in a list
         train_loader = []
         for dataset_path in uzh_datasets:
-            print(f"Loading UZH FPV dataset {dataset_path}...")
+            if is_main_process:
+                print(f"Loading UZH FPV dataset {dataset_path}...")
             single_dataset = DatasetTrain(
                 args.dt, 
                 dataset_path, 
                 transform=co_transform, 
                 num_bins=args.num_bins
             )
-            # Create a separate loader for EACH file
-            single_loader = DataLoader(
-                dataset=single_dataset, 
-                batch_size=batch_size, 
-                shuffle=True, 
-                num_workers=workers, 
-                pin_memory=True, 
-                drop_last=True,
-                multiprocessing_context='spawn'
-            )
+            
+            # Use DistributedSampler ONLY if in multi-GPU mode
+            if is_distributed:
+                from torch.utils.data.distributed import DistributedSampler
+                sampler = DistributedSampler(single_dataset, shuffle=True)
+                single_loader = DataLoader(
+                    dataset=single_dataset, 
+                    batch_size=batch_size, 
+                    sampler=sampler,
+                    num_workers=workers, 
+                    pin_memory=True, 
+                    drop_last=True
+                )
+            else:
+                single_loader = DataLoader(
+                    dataset=single_dataset, 
+                    batch_size=batch_size, 
+                    shuffle=True, 
+                    num_workers=workers, 
+                    pin_memory=True, 
+                    drop_last=True,
+                    multiprocessing_context='spawn'
+                )
             train_loader.append(single_loader)
 
     # Initialize Mixed Precision Scaler
@@ -641,20 +677,29 @@ def main():
 
         scheduler.step()
 
+        # Set sampler epoch in the training loop
+        if is_distributed and args.train_dataset == 'uzh-fpv':
+            for loader in train_loader:
+                if hasattr(loader, 'sampler') and hasattr(loader.sampler, 'set_epoch'):
+                    loader.sampler.set_epoch(epoch)
+
         # Test at every n epoch during training
         if (epoch + 1) % args.eval_int == 0:
             # evaluate on validation set
             with torch.no_grad():
                 total_EPE = 0
+                eval_net = model.module if hasattr(model, 'module') else model
                 for t_loader, t_src, t_gt, t_env in test_loaders:
-                    total_EPE += validate(t_loader, model, epoch, output_writers, t_src, t_gt, t_env)
+                    total_EPE += validate(t_loader, eval_net, epoch, output_writers if is_main_process else [], t_src, t_gt, t_env)
                 EPE = total_EPE / len(test_loaders)
-            if len(test_loaders) > 1:
-                print(f'================ Overall Validation Outcome (Epoch {epoch}) ===================')
-                print(f'Mean EPE across all {len(test_loaders)} sequences: {EPE:.3f}')
-                print('=============================================================================')
+            
+            if is_main_process:
+                if len(test_loaders) > 1:
+                    print(f'================ Overall Validation Outcome (Epoch {epoch}) ===================')
+                    print(f'Mean EPE across all {len(test_loaders)} sequences: {EPE:.3f}')
+                    print('=============================================================================')
 
-            test_writer.add_scalar('mean_val_EPE', EPE, epoch)
+                test_writer.add_scalar('mean_val_EPE', EPE, epoch)
 
             if best_EPE < 0:
                 best_EPE = EPE
@@ -663,12 +708,12 @@ def main():
                 is_best = EPE < best_EPE
                 best_EPE = min(EPE, best_EPE)
 
-            if EPE < args.save_thred:
+            if is_main_process and EPE < args.save_thred:
                 filename = f'checkpoint_epoch_{epoch + 1}_{EPE}.pth.tar'
                 save_checkpoint({
                     'epoch': epoch + 1,
                     'arch': arch,
-                    'state_dict': model.module.state_dict(),
+                    'state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
                     'best_EPE': best_EPE,
                     'div_flow': div_flow,
                     'num_bins': args.num_bins
@@ -681,12 +726,17 @@ def main():
                 val_fail_times += 1
 
             if val_fail_times >= args.max_fail_times:
-                print(
-                    "Epoch {}: validation failed for consective {} times".format(
-                        epoch, val_fail_times
+                if is_main_process:
+                    print(
+                        "Epoch {}: validation failed for consective {} times".format(
+                            epoch, val_fail_times
+                        )
                     )
-                )
                 break
+
+            if is_distributed:
+                import torch.distributed as dist
+                dist.barrier()
 
 
 if __name__ == '__main__':
