@@ -520,16 +520,17 @@ def main():
     assert (args.solver in ['adam', 'sgd'])
     print(f'=> setting {args.solver} solver')
 
-    # 1. Safely extract PLIF decay parameters via .module
+    # 1. Safely extract PLIF decay parameters
     # (Ensures the SNN temporal memory parameters are isolated)
+    model_obj = model.module if hasattr(model, 'module') else model
     alpha_params = [
-        model.module.alpha1, model.module.alpha2, model.module.alpha3, model.module.alpha4
+        model_obj.alpha1, model_obj.alpha2, model_obj.alpha3, model_obj.alpha4
     ]
     alpha_param_ids = list(map(id, alpha_params))
 
     # 2. Extract and filter bias/weight parameters to EXCLUDE the alpha params
-    bias_params = [p for p in model.module.bias_parameters() if id(p) not in alpha_param_ids]
-    weight_params = [p for p in model.module.weight_parameters() if id(p) not in alpha_param_ids]
+    bias_params = [p for p in model_obj.bias_parameters() if id(p) not in alpha_param_ids]
+    weight_params = [p for p in model_obj.weight_parameters() if id(p) not in alpha_param_ids]
 
     # ---> BACKWARD COMPATIBILITY: Dynamic SNN Learning Rate Scale <---
     # Allow PLIF alpha parameters to adapt actively during warmup and early epochs
