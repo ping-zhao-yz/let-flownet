@@ -154,16 +154,14 @@ class Let_Flownet_Voxel(BaseModel):
             dim_feedforward=256, activation='relu', dropout=0.0
         )
         
-        # Lightweight CNN upsampler to scale the H/8 residual back to H/2
-        self.tiny_up = nn.Sequential(
-            UpsampleConvLayer(in_channels=self.tiny_d_model, out_channels=64, kernel_size=3, stride=1, padding=1, norm=norm),
-            UpsampleConvLayer(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1, norm=norm),
-            nn.Conv2d(32, 2, kernel_size=3, padding=1)
-        )
+        # High-resolution skip-connection upsampler to scale the H/8 residual back to H/2
+        self.tiny_conv_1 = ConvLayer(in_channels=self.tiny_d_model + 128, out_channels=64, kernel_size=3, stride=1, padding=1, norm=norm)
+        self.tiny_conv_2 = ConvLayer(in_channels=64 + 64, out_channels=32, kernel_size=3, stride=1, padding=1, norm=norm)
+        self.tiny_conv_out = nn.Conv2d(32, 2, kernel_size=3, padding=1)
         
         # Initialize Tiny Refiner output to near-zero so it starts as an Identity function
-        nn.init.normal_(self.tiny_up[-1].weight, 0, 1e-5)
-        nn.init.constant_(self.tiny_up[-1].bias, 0)
+        nn.init.normal_(self.tiny_conv_out.weight, 0, 1e-5)
+        nn.init.constant_(self.tiny_conv_out.bias, 0)
 
     def encode_snn(self, input, sp_threshold):
         B, _, H, W, num_bins = input.size()
@@ -346,8 +344,20 @@ class Let_Flownet_Voxel(BaseModel):
             # Reshape tokens back to 2D image (H//8, W//8)
             hc_img = rearrange(hs_tiny, '(h w) n c -> n c h w', h=H//8, w=W//8)
 
-            # Upsample the hidden state to predict Delta Flow at H/2
-            delta_flow = self.tiny_up(hc_img)
+            # High-Resolution Upsampling with Skip Connections from the WARPED SNN backbone
+            flow_b1 = F.interpolate(flow_current * 0.5, size=(H//4, W//4), mode='bilinear', align_corners=False)
+            warped_b1 = self.warp_features(blocks[1], flow_b1)
+            hc_up_1 = F.interpolate(hc_img, scale_factor=2, mode='bilinear', align_corners=False) # H/8 -> H/4
+            concat_1 = torch.cat([hc_up_1, warped_b1], dim=1) # 128 + 128 = 256
+            feat_1 = self.tiny_conv_1(concat_1) # 64
+            
+            flow_b0 = flow_current  # already at H/2
+            warped_b0 = self.warp_features(blocks[0], flow_b0)
+            feat_1_up = F.interpolate(feat_1, scale_factor=2, mode='bilinear', align_corners=False) # H/4 -> H/2
+            concat_2 = torch.cat([feat_1_up, warped_b0], dim=1) # 64 + 64 = 128
+            feat_2 = self.tiny_conv_2(concat_2) # 32
+            
+            delta_flow = self.tiny_conv_out(feat_2)
             
             # 4. TRUNCATE RECURRENCE ONLY AFTER ITERATION 0:
             if i == 0:

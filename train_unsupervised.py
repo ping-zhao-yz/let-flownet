@@ -11,6 +11,7 @@ import torch.backends.cudnn as cudnn
 import torch.optim
 import torchvision.transforms as transforms
 import warnings
+import torch.distributed as dist
 
 from datetime import datetime
 from tensorboardX import SummaryWriter
@@ -125,7 +126,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     # switch to train mode
     model.train()
 
-    multiscale_weights = [0.01, 0.02, 0.08, 0.2]
+    multiscale_weights = [0.01, 0.02, 0.08, 1.0]
     print_freq = 100
     valid_batches = 0
 
@@ -187,7 +188,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                     [f_pred],
                     device,
                     print_details=False,
-                    weights=[0.2]
+                    weights=[1.0]
                 )
                 loss_seq += i_weight * i_loss
 
@@ -420,7 +421,6 @@ def main():
     is_distributed = "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1
     
     if is_distributed:
-        import torch.distributed as dist
         dist.init_process_group(backend='nccl')
         local_rank = int(os.environ["LOCAL_RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
@@ -534,7 +534,7 @@ def main():
 
     # ---> BACKWARD COMPATIBILITY: Dynamic SNN Learning Rate Scale <---
     # Allow PLIF alpha parameters to adapt actively during warmup and early epochs
-    snn_lr_scale = 0.1
+    snn_lr_scale = 0.01
 
     if args.solver == 'adam':
         optimizer = torch.optim.Adam([
@@ -736,7 +736,6 @@ def main():
                 break
 
             if is_distributed:
-                import torch.distributed as dist
                 dist.barrier()
 
 
