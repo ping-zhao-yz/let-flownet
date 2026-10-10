@@ -192,7 +192,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                     [f_pred],
                     device,
                     print_details=False,
-                    weights=[1.0]
+                    weights=[0.2]
                 )
                 loss_seq += i_weight * i_loss
 
