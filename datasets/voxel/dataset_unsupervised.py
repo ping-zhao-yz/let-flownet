@@ -112,6 +112,7 @@ class DatasetTrain(Dataset):
             voxel_tensor = voxel_transformed_flat.view(self.num_bins, 2, 256, 256)
 
             if random.random() > 0.5:
+                # Flips dim 0 (Temporal bins) AND dim 1 (Polarity)
                 voxel_tensor = torch.flip(voxel_tensor, dims=[0, 1])
                 
                 temp_gray = gray_f_final

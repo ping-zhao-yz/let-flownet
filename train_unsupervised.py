@@ -176,9 +176,13 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             gamma = 0.8
             n_predictions = len(seq_fp32)
             
+            # Compute RAFT gamma weights and normalize so they sum to 1.0
+            weights_raw = [gamma ** (n_predictions - i - 1) for i in range(n_predictions)]
+            weight_sum = sum(weights_raw)
+            
             for i, f_pred in enumerate(seq_fp32):
-                # Calculate RAFT exponential weight: gamma^(N - i - 1)
-                i_weight = (gamma ** (n_predictions - i - 1)) / n_predictions
+                # Normalized weight
+                i_weight = weights_raw[i] / weight_sum
                 
                 # Trick the multiscale function into evaluating a single scale
                 i_loss = photometric_loss_multiscale(

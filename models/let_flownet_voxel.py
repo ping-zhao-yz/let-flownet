@@ -347,14 +347,16 @@ class Let_Flownet_Voxel(BaseModel):
             # High-Resolution Upsampling with Skip Connections from the WARPED SNN backbone
             flow_b1 = F.interpolate(flow_current * 0.5, size=(H//4, W//4), mode='bilinear', align_corners=False)
             warped_b1 = self.warp_features(blocks[1], flow_b1)
+            diff_b1 = blocks[1] - warped_b1
             hc_up_1 = F.interpolate(hc_img, scale_factor=2, mode='bilinear', align_corners=False) # H/8 -> H/4
-            concat_1 = torch.cat([hc_up_1, warped_b1], dim=1) # 128 + 128 = 256
+            concat_1 = torch.cat([hc_up_1, diff_b1], dim=1) # 128 + 128 = 256
             feat_1 = self.tiny_conv_1(concat_1) # 64
             
             flow_b0 = flow_current  # already at H/2
             warped_b0 = self.warp_features(blocks[0], flow_b0)
+            diff_b0 = blocks[0] - warped_b0
             feat_1_up = F.interpolate(feat_1, scale_factor=2, mode='bilinear', align_corners=False) # H/4 -> H/2
-            concat_2 = torch.cat([feat_1_up, warped_b0], dim=1) # 64 + 64 = 128
+            concat_2 = torch.cat([feat_1_up, diff_b0], dim=1) # 64 + 64 = 128
             feat_2 = self.tiny_conv_2(concat_2) # 32
             
             delta_flow = self.tiny_conv_out(feat_2)
