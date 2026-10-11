@@ -1,3 +1,4 @@
+from loss import loss_photometric
 import argparse
 import cv2
 import h5py
@@ -199,12 +200,11 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             loss_metric = loss_coarse + loss_seq
             loss_metric_name = 'photometric_loss'
 
-            # Calculate smoothness on the very last refined flow scaled to native 256x256 resolution
             if len(seq_fp32) > 0:
                 refined_flow_full = F.interpolate(seq_fp32[-1] * 2.0, scale_factor=2, mode='bilinear', align_corners=False)
-                smoothness_loss = smooth_loss([refined_flow_full])
+                smoothness_loss = smooth_loss(flows_p1_fp32) + smooth_loss([refined_flow_full])
             else:
-                smoothness_loss = smooth_loss([flows_p1_fp32[-1][:, :2]])
+                smoothness_loss = smooth_loss(flows_p1_fp32)
             
             loss = loss_metric + smoothness_loss
 

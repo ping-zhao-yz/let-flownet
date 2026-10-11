@@ -317,9 +317,10 @@ class Let_Flownet_Voxel(BaseModel):
         if iters == 0:
             return flows_p1
 
-        # Base coarse flow from Pass 1: select true H/2 coarse flow (true_flow2 at 128x128)
+        # Base coarse flow from Pass 1: select primary full-resolution flow (flow3 at 256x256)
+        # downsampled to H/2 coordinate space.
         # Keep graph attached so sequence loss gradients flow back into SNN & TPA backbone
-        flow_current = flows_p1[-2][:, :2]
+        flow_current = F.interpolate(flows_p1[-1][:, :2] * 0.5, size=(H//2, W//2), mode='bilinear', align_corners=False)
 
         # Step 3: N-Pass Tiny Iterative Refinement
         flow_sequence = []
@@ -372,11 +373,12 @@ class Let_Flownet_Voxel(BaseModel):
             flow_sequence.append(flow_current)
 
         if not self.training:
-            # During validation, return the standard 4-scale format using the final refinement at H/2
-            if flows_p1[-2].size(1) > 2:
-                final_flow = torch.cat([flow_current, flows_p1[-2][:, 2:]], dim=1)
+            # During validation, upsample the final refined flow back to native 256x256 resolution
+            refined_flow_full = F.interpolate(flow_current * 2.0, size=(H, W), mode='bilinear', align_corners=False)
+            if flows_p1[-1].size(1) > 2:
+                final_flow = torch.cat([refined_flow_full, flows_p1[-1][:, 2:]], dim=1)
             else:
-                final_flow = flow_current
+                final_flow = refined_flow_full
             return [flows_p1[0], flows_p1[1], flows_p1[2], final_flow]
 
         # During training, return the coarse scales AND the entire sequence of refinements
