@@ -200,12 +200,16 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             loss_metric = loss_coarse + loss_seq
             loss_metric_name = 'photometric_loss'
 
+            # --- Smoothness Loss Scaling ---
+            smooth_weight = 500.0  # Scales raw 0.06 -> ~30.0 (approx 0.5% - 1.0% of total loss)
+
             if len(seq_fp32) > 0:
                 refined_flow_full = F.interpolate(seq_fp32[-1] * 2.0, scale_factor=2, mode='bilinear', align_corners=False)
-                smoothness_loss = smooth_loss(flows_p1_fp32) + smooth_loss([refined_flow_full])
+                raw_smooth = smooth_loss(flows_p1_fp32) + smooth_loss([refined_flow_full])
             else:
-                smoothness_loss = smooth_loss(flows_p1_fp32)
+                raw_smooth = smooth_loss(flows_p1_fp32)
             
+            smoothness_loss = raw_smooth * smooth_weight
             loss = loss_metric + smoothness_loss
 
             optimizer.zero_grad()
