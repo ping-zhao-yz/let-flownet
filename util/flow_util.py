@@ -45,6 +45,7 @@ def flow2rgb(flow_map, max_value):
 
 
 def save_checkpoint(state, is_best, save_path, filename='checkpoint.pth.tar'):
+    os.makedirs(save_path, exist_ok=True)
     torch.save(state, os.path.join(save_path, filename))
     if is_best:
         shutil.copyfile(os.path.join(save_path, filename),

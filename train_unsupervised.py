@@ -469,13 +469,14 @@ def main():
         
     print(f"=> Created {len(test_loaders)} validation loader(s).")
 
-    save_path = '{},bat{},lr{},bin{}'.format(
+    save_path = '{},bat{},lr{},bin{},itr{}'.format(
         arch,
         batch_size,
         args.lr,
-        args.num_bins)
+        args.num_bins,
+        args.iters)
 
-    timestamp = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M")
+    timestamp = datetime.strftime(datetime.now(), "%d-%m-%Y_%H-%M-%S")
     save_path = os.path.join(timestamp, save_path)
     save_path = os.path.join(save_dir, save_path)
     os.makedirs(save_path, exist_ok=True)
