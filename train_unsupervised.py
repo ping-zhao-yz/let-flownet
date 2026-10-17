@@ -79,6 +79,11 @@ parser.add_argument('--max_fail_times', type=int, default=5, help='maximum failu
 
 parser.add_argument('--save_thred', type=float, default=1.05, help='threashold for saving the checkpoint')
 
+parser.add_argument('--freeze_backbone_epochs', type=int, default=0,
+                    help='Number of initial epochs to freeze coarse backbone and auto-detach coarse flow')
+parser.add_argument('--seq_loss_weight', type=float, default=1.0,
+                    help='Weight for the full-resolution sequence refinement loss (default: 1.0)')
+
 parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
                     help='Host environment to determine dataset paths')
 
@@ -144,9 +149,12 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
 
             event_data = voxel_tensor.to(device)
 
+            # Automatically detach coarse flow during frozen curriculum epochs
+            should_detach = (epoch < args.freeze_backbone_epochs)
+
             # --- MIXED PRECISION FORWARD PASS ---
             with torch.amp.autocast('cuda', enabled=args.mixed_precision, dtype=torch.bfloat16):
-                output = model(event_data, sp_threshold, iters=args.iters)
+                output = model(event_data, sp_threshold, iters=args.iters, detach_coarse=should_detach)
                 if args.iters == 0:
                     flows_p1 = output
                     flow_sequence = []
@@ -185,7 +193,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                 # Normalized weight
                 i_weight = weights_raw[i] / weight_sum
                 
-                # Trick the multiscale function into evaluating a single scale
+                # Trick the multiscale function into evaluating a single scale at native 256x256
                 i_loss = photometric_loss_multiscale(
                     former_gray_tensor,
                     latter_gray_tensor,
@@ -193,7 +201,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
                     [f_pred],
                     device,
                     print_details=False,
-                    weights=[0.2]
+                    weights=[args.seq_loss_weight]
                 )
                 loss_seq += i_weight * i_loss
 
@@ -204,7 +212,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
             smooth_weight = 1.0
 
             if len(seq_fp32) > 0:
-                refined_flow_full = F.interpolate(seq_fp32[-1] * 2.0, scale_factor=2, mode='bilinear', align_corners=False)
+                refined_flow_full = seq_fp32[-1]
                 raw_smooth = smooth_loss(flows_p1_fp32) + smooth_loss([refined_flow_full])
             else:
                 raw_smooth = smooth_loss(flows_p1_fp32)
@@ -658,6 +666,19 @@ def main():
     scaler = torch.amp.GradScaler('cuda', enabled=False)
 
     for epoch in range(args.start_epoch, epochs):
+
+        # Dynamically freeze or unfreeze coarse SNN/TPA backbone parameters for curriculum warm-start
+        freeze_bb = (epoch < args.freeze_backbone_epochs)
+        model_obj = model.module if hasattr(model, 'module') else model
+        for name, param in model_obj.named_parameters():
+            if 'tiny_' not in name and 'convex_' not in name and 'flow_inj' not in name:
+                param.requires_grad = not freeze_bb
+        
+        if is_main_process:
+            if freeze_bb:
+                print(f"=> [Curriculum] Epoch {epoch}: Coarse backbone FROZEN (training Tiny Refiner & Convex Head only).")
+            elif epoch == args.freeze_backbone_epochs and args.freeze_backbone_epochs > 0:
+                print(f"=> [Curriculum] Epoch {epoch}: Coarse backbone UNFROZEN (full end-to-end training active).")
 
         current_lr = optimizer.param_groups[0]['lr']
         print(f"Learning Rate: {current_lr:.6f}")

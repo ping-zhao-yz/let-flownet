@@ -144,8 +144,8 @@ class Let_Flownet_Voxel(BaseModel):
 
         # ---> ASYMMETRIC ITERATION: Tiny Transformer Refiner (Operates at H/8) <---
         self.tiny_d_model = 128
-        # 256 (feature difference) + 2 (current flow coordinate field)
-        self.tiny_proj = nn.Conv2d(258, self.tiny_d_model, kernel_size=3, padding=1)
+        # Context blocks[2] (256) + Warped blocks[2] (256) + Feature Difference (256) + Flow State (2) = 770
+        self.tiny_proj = nn.Conv2d(256 * 3 + 2, self.tiny_d_model, kernel_size=3, padding=1)
         self.tiny_pos = build_position_encoding('sine', self.tiny_d_model)
         
         # A single, hyper-fast self-attention layer for residual calculation
@@ -162,6 +162,16 @@ class Let_Flownet_Voxel(BaseModel):
         # Initialize Tiny Refiner output to near-zero so it starts as an Identity function
         nn.init.normal_(self.tiny_conv_out.weight, 0, 1e-5)
         nn.init.constant_(self.tiny_conv_out.bias, 0)
+
+        # ---> Convex Upsampling Head: 3x3 neighborhood * 4 subpixels = 36 channels
+        self.convex_mask = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 9 * 4, kernel_size=1, padding=0)
+        )
+        # Initialize mask head to zeros so initial weights are uniformly 1/9 (smooth average)
+        nn.init.zeros_(self.convex_mask[-1].weight)
+        nn.init.zeros_(self.convex_mask[-1].bias)
 
     def encode_snn(self, input, sp_threshold):
         B, _, H, W, num_bins = input.size()
@@ -305,7 +315,27 @@ class Let_Flownet_Voxel(BaseModel):
 
         return F.grid_sample(x, target_grid, mode='bilinear', padding_mode='border', align_corners=True)
 
-    def forward(self, input, sp_threshold, iters=2):
+    def convex_upsample_2x(self, flow, mask):
+        """
+        Upsamples flow from [B, 2, H, W] (at H/2 resolution) to [B, 2, 2*H, 2*W] (at full H resolution)
+        using learned convex combination weights over a 3x3 local neighborhood.
+        flow: [B, 2, H, W]
+        mask: [B, 36, H, W]
+        Returns: [B, 2, 2*H, 2*W]
+        """
+        B, _, H, W = flow.shape
+        mask = mask.view(B, 1, 9, 2, 2, H, W)
+        mask = torch.softmax(mask, dim=2)
+
+        flow_padded = F.pad(flow * 2.0, (1, 1, 1, 1), mode='replicate')
+        flow_unfold = F.unfold(flow_padded, kernel_size=3, padding=0)
+        flow_unfold = flow_unfold.view(B, 2, 9, H, W).unsqueeze(3).unsqueeze(4)
+
+        flow_up = torch.sum(mask * flow_unfold, dim=2)
+        flow_up = flow_up.permute(0, 1, 4, 2, 5, 3).contiguous().view(B, 2, 2 * H, 2 * W)
+        return flow_up
+
+    def forward(self, input, sp_threshold, iters=2, detach_coarse=None):
         B, _, H, W, num_bins = input.size()
 
         # Step 1: SNN extracts temporal features once
@@ -319,8 +349,10 @@ class Let_Flownet_Voxel(BaseModel):
 
         # Base coarse flow from Pass 1: select primary full-resolution flow (flow3 at 256x256)
         # downsampled to H/2 coordinate space.
-        # Keep graph attached so sequence loss gradients flow back into SNN & TPA backbone
-        flow_current = F.interpolate(flows_p1[-1][:, :2] * 0.5, size=(H//2, W//2), mode='bilinear', align_corners=False)
+        detach_coarse = False if detach_coarse is None else detach_coarse
+
+        base_flow = flows_p1[-1][:, :2].detach() if detach_coarse else flows_p1[-1][:, :2]
+        flow_current = F.interpolate(base_flow * 0.5, size=(H//2, W//2), mode='bilinear', align_corners=False)
 
         # Step 3: N-Pass Tiny Iterative Refinement
         flow_sequence = []
@@ -334,8 +366,9 @@ class Let_Flownet_Voxel(BaseModel):
             # 2. Explicit alignment difference map
             diff_b2 = blocks[2] - warped_b2
 
-            # 3. Concatenate feature residual with current flow state [B, 258, H//8, W//8]
-            refiner_in = torch.cat([diff_b2, flow_b2], dim=1)
+            # 3. Rich Contextual Matching Input [B, 770, H//8, W//8]
+            # Concatenates Reference Context, Warped Alignment, Residual Error, and Current Flow State
+            refiner_in = torch.cat([blocks[2], warped_b2, diff_b2, flow_b2], dim=1)
 
             # Tiny Transformer Self-Attention
             token_tiny = self.tiny_proj(refiner_in).flatten(2).transpose(1, 2)
@@ -361,27 +394,29 @@ class Let_Flownet_Voxel(BaseModel):
             feat_2 = self.tiny_conv_2(concat_2) # 32
             
             delta_flow = self.tiny_conv_out(feat_2)
+            mask = self.convex_mask(feat_2)
             
-            # 4. TRUNCATE RECURRENCE ONLY AFTER ITERATION 0:
-            if i == 0:
-                # Step 0: flow_current is fully connected to flows_p1, allowing loss_seq to train the backbone
+            # 4. Truncate recurrence only after iteration 0 (unless detach_coarse is active)
+            if i == 0 and not detach_coarse:
                 flow_current = flow_current + delta_flow
             else:
-                # Step 1+: detach past flow accumulation to prevent compounding warping gradients
                 flow_current = flow_current.detach() + delta_flow
 
-            flow_sequence.append(flow_current)
+            # 5. Full-resolution 256x256 flow via learned convex upsampling
+            flow_full = self.convex_upsample_2x(flow_current, mask)
+            if flows_p1[-1].size(1) > 2:
+                flow_full_out = torch.cat([flow_full, flows_p1[-1][:, 2:]], dim=1)
+            else:
+                flow_full_out = flow_full
+
+            flow_sequence.append(flow_full_out)
 
         if not self.training:
-            # During validation, upsample the final refined flow back to native 256x256 resolution
-            refined_flow_full = F.interpolate(flow_current * 2.0, size=(H, W), mode='bilinear', align_corners=False)
-            if flows_p1[-1].size(1) > 2:
-                final_flow = torch.cat([refined_flow_full, flows_p1[-1][:, 2:]], dim=1)
-            else:
-                final_flow = refined_flow_full
+            # During validation, upsampled final refined flow at native 256x256 resolution
+            final_flow = flow_sequence[-1]
             return [flows_p1[0], flows_p1[1], flows_p1[2], final_flow]
 
-        # During training, return the coarse scales AND the entire sequence of refinements
+        # During training, return the coarse scales AND the entire sequence of full-res refinements
         return flows_p1, flow_sequence
 
     def weight_parameters(self):
@@ -396,7 +431,8 @@ def let_flownet_voxel(args, device, data=None):
 
     if data is not None:
         try:
-            model.load_state_dict(data['state_dict'], strict=False)
+            missing, unexpected = model.load_state_dict(data['state_dict'], strict=False)
+            print(f"=> Pre-trained weights loaded with strict=False (missing keys: {len(missing)}, unexpected keys: {len(unexpected)})")
         except RuntimeError as e:
             print(f"Error loading state dict: {e}")
             print("Continuing without pre-trained weights.")
