@@ -81,6 +81,8 @@ parser.add_argument('--save_thred', type=float, default=1.05, help='threashold f
 
 parser.add_argument('--freeze_backbone_epochs', type=int, default=0,
                     help='Number of initial epochs to freeze coarse backbone and auto-detach coarse flow')
+parser.add_argument('--backbone_lr_scale', type=float, default=0.5,
+                    help='Learning rate multiplier for coarse SNN/TPA backbone relative to refiner head (default: 0.5, i.e., 1:2 ratio)')
 parser.add_argument('--seq_loss_weight', type=float, default=1.0,
                     help='Weight for the full-resolution sequence refinement loss (default: 1.0)')
 
@@ -543,29 +545,61 @@ def main():
     alpha_params = [
         model_obj.alpha1, model_obj.alpha2, model_obj.alpha3, model_obj.alpha4
     ]
-    alpha_param_ids = list(map(id, alpha_params))
+    alpha_param_ids = set(map(id, alpha_params))
 
-    # 2. Extract and filter bias/weight parameters to EXCLUDE the alpha params
-    bias_params = [p for p in model_obj.bias_parameters() if id(p) not in alpha_param_ids]
-    weight_params = [p for p in model_obj.weight_parameters() if id(p) not in alpha_param_ids]
+    # 2. Categorize parameters into Refiner Head vs Coarse Backbone, and Weight vs Bias
+    refiner_bias = []
+    refiner_weight = []
+    backbone_bias = []
+    backbone_weight = []
 
-    # ---> BACKWARD COMPATIBILITY: Dynamic SNN Learning Rate Scale <---
-    # Allow PLIF alpha parameters to adapt actively during warmup and early epochs
+    for name, param in model_obj.named_parameters():
+        if id(param) in alpha_param_ids:
+            continue
+        is_refiner = ('tiny_' in name or 'convex_' in name or 'flow_inj' in name)
+        is_bias = ('bias' in name)
+
+        if is_refiner:
+            if is_bias:
+                refiner_bias.append(param)
+            else:
+                refiner_weight.append(param)
+        else:
+            if is_bias:
+                backbone_bias.append(param)
+            else:
+                backbone_weight.append(param)
+
+    # Sanity check: Ensure all parameters are accounted for
+    total_grouped = len(refiner_bias) + len(refiner_weight) + len(backbone_bias) + len(backbone_weight) + len(alpha_params)
+    assert total_grouped == len(list(model_obj.parameters())), (
+        f"Parameter grouping mismatch: {total_grouped} grouped vs {len(list(model_obj.parameters()))} total"
+    )
+
     snn_lr_scale = 0.01
 
+    param_groups = []
+    if refiner_bias:
+        param_groups.append({'params': refiner_bias, 'lr': args.lr, 'weight_decay': 0.0, 'name': 'refiner_bias'})
+    if refiner_weight:
+        param_groups.append({'params': refiner_weight, 'lr': args.lr, 'weight_decay': 4e-4, 'name': 'refiner_weight'})
+    if backbone_bias:
+        param_groups.append({'params': backbone_bias, 'lr': args.lr * args.backbone_lr_scale, 'weight_decay': 0.0, 'name': 'backbone_bias'})
+    if backbone_weight:
+        param_groups.append({'params': backbone_weight, 'lr': args.lr * args.backbone_lr_scale, 'weight_decay': 4e-4, 'name': 'backbone_weight'})
+    if alpha_params:
+        param_groups.append({'params': alpha_params, 'lr': args.lr * snn_lr_scale, 'weight_decay': 0.0, 'name': 'alpha'})
+
+    if is_main_process:
+        print(f"=> Differential Learning Rates configured (backbone_lr_scale={args.backbone_lr_scale}):")
+        print(f"   * Refiner Head: {len(refiner_weight) + len(refiner_bias)} tensors (LR: {args.lr:.6f})")
+        print(f"   * Coarse Backbone: {len(backbone_weight) + len(backbone_bias)} tensors (LR: {args.lr * args.backbone_lr_scale:.6f})")
+        print(f"   * PLIF Alpha: {len(alpha_params)} tensors (LR: {args.lr * snn_lr_scale:.6f})")
+
     if args.solver == 'adam':
-        optimizer = torch.optim.Adam([
-            {'params': bias_params, 'weight_decay': 0.0},
-            {'params': weight_params, 'weight_decay': 4e-4},
-            {'params': alpha_params, 'lr': args.lr * snn_lr_scale, 'weight_decay': 0.0} 
-        ], lr=args.lr)
-        
+        optimizer = torch.optim.Adam(param_groups)
     elif args.solver == 'sgd':
-        optimizer = torch.optim.SGD([
-            {'params': bias_params, 'weight_decay': 0.0},
-            {'params': weight_params, 'weight_decay': 4e-4},
-            {'params': alpha_params, 'lr': args.lr * snn_lr_scale, 'weight_decay': 0.0}
-        ], lr=args.lr, momentum=0.9)
+        optimizer = torch.optim.SGD(param_groups, momentum=0.9)
 
     # Conditional Scheduler Setup
     if args.warmup_epochs > 0:
@@ -573,8 +607,10 @@ def main():
         scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
             optimizer, start_factor=0.01, end_factor=1.0, total_iters=args.warmup_epochs
         )
+        milestone_epochs = [15, 30, 45, 60, 80]
+        effective_milestones = [m - args.warmup_epochs for m in milestone_epochs if m > args.warmup_epochs]
         scheduler_multistep = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, milestones=[15, 30, 45, 60, 80], gamma=0.5
+            optimizer, milestones=effective_milestones, gamma=0.5
         )
         scheduler = torch.optim.lr_scheduler.SequentialLR(
             optimizer, schedulers=[scheduler_warmup, scheduler_multistep], milestones=[args.warmup_epochs]
@@ -678,10 +714,15 @@ def main():
             if freeze_bb:
                 print(f"=> [Curriculum] Epoch {epoch}: Coarse backbone FROZEN (training Tiny Refiner & Convex Head only).")
             elif epoch == args.freeze_backbone_epochs and args.freeze_backbone_epochs > 0:
-                print(f"=> [Curriculum] Epoch {epoch}: Coarse backbone UNFROZEN (full end-to-end training active).")
+                print(f"=> [Curriculum] Epoch {epoch}: Coarse backbone UNFROZEN (full end-to-end training active with backbone_lr_scale={args.backbone_lr_scale}).")
 
-        current_lr = optimizer.param_groups[0]['lr']
-        print(f"Learning Rate: {current_lr:.6f}")
+        refiner_lr = optimizer.param_groups[0]['lr']
+        backbone_lr = refiner_lr
+        for pg in optimizer.param_groups:
+            if pg.get('name') == 'backbone_weight':
+                backbone_lr = pg['lr']
+                break
+        print(f"Learning Rate: {refiner_lr:.6f} (Backbone LR: {backbone_lr:.6f})")
 
         if args.train_dataset in ['uzh-fpv']:
             # Shuffle the order we read the HDF5 sequence files every epoch

@@ -384,16 +384,16 @@ class Let_Flownet_Voxel(BaseModel):
             diff_b1 = blocks[1] - warped_b1
             hc_up_1 = F.interpolate(hc_img, scale_factor=2, mode='bilinear', align_corners=False) # H/8 -> H/4
             concat_1 = torch.cat([hc_up_1, diff_b1], dim=1) # 128 + 128 = 256
-            feat_1 = self.tiny_conv_1(concat_1) # 64
+            feat_1 = self.tiny_conv_1(concat_1) # 64 x 64
             
             flow_b0 = flow_current  # already at H/2
             warped_b0 = self.warp_features(blocks[0], flow_b0)
             diff_b0 = blocks[0] - warped_b0
             feat_1_up = F.interpolate(feat_1, scale_factor=2, mode='bilinear', align_corners=False) # H/4 -> H/2
             concat_2 = torch.cat([feat_1_up, diff_b0], dim=1) # 64 + 64 = 128
-            feat_2 = self.tiny_conv_2(concat_2) # 32
+            feat_2 = self.tiny_conv_2(concat_2) # 128 x 128
             
-            delta_flow = self.tiny_conv_out(feat_2)
+            delta_flow = self.tiny_conv_out(feat_2) # 128 x 128
             mask = self.convex_mask(feat_2)
             
             # 4. Truncate recurrence only after iteration 0 (unless detach_coarse is active)
@@ -403,7 +403,7 @@ class Let_Flownet_Voxel(BaseModel):
                 flow_current = flow_current.detach() + delta_flow
 
             # 5. Full-resolution 256x256 flow via learned convex upsampling
-            flow_full = self.convex_upsample_2x(flow_current, mask)
+            flow_full = self.convex_upsample_2x(flow_current, mask) # 256 x 256
             if flows_p1[-1].size(1) > 2:
                 flow_full_out = torch.cat([flow_full, flows_p1[-1][:, 2:]], dim=1)
             else:
