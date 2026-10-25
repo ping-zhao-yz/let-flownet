@@ -91,7 +91,7 @@ train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
 test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
 test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
-save_dir = f'/scratch/let-flownet/outputs/let_flownet_evtcount_dt{args.dt}_output'
+save_dir = f'/media/windows_data/code/research/outputs/let_flownet_evtcount_dt{args.dt}_output'
 
 arch = "let_flownet_evtcount"
 

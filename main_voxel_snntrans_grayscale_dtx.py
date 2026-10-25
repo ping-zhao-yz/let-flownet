@@ -94,7 +94,7 @@ test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
 uzh_fpv_dataset_path = '/media/windows_data/code/research/dataset/Event/uzh-fpv/data/'
 
-save_dir = f'/scratch/let-flownet/outputs/let_flownet_voxel_multiscale_dt{args.dt}_output'
+save_dir = f'/media/windows_data/code/research/outputs/let_flownet_voxel_multiscale_dt{args.dt}_output'
 
 arch = "let_flownet_voxel"
 
