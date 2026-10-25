@@ -78,8 +78,8 @@ div_flow = 1
 
 # dataset_dir = '../../../dataset/Event/mvsec/preprocessed'
 # src_file_dir = '../../../dataset/Event/mvsec/original'
-dataset_dir = '/scratch/let-flownet/dataset/Event/mvsec/preprocessed'
-src_file_dir = '/scratch/let-flownet/dataset/Event/mvsec/original'
+dataset_dir = '/media/windows_data/code/research/dataset/Event/mvsec/preprocessed'
+src_file_dir = '/media/windows_data/code/research/dataset/Event/mvsec/original'
 
 train_env = args.train_env
 test_env = args.test_env
