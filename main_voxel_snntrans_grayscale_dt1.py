@@ -41,7 +41,7 @@ parser.add_argument('--norm', default='BN',
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 
-parser.add_argument('--tau', default=20*1e-3, help='time constant for Leaky Integrate and Fire (LIF) model')
+parser.add_argument('--tau', type=float, default=20e-3, help='time constant for Leaky Integrate and Fire (LIF) model: 20e-3 for dt=1, 50e-3 for dt=4, 100e-3 for dt=8')
 
 parser.add_argument('--num_enc_layers', default=2, help='number of transformer encoder layers')
 parser.add_argument('--num_dec_layers', default=2, help='number of transformer decoder layers')
@@ -53,7 +53,7 @@ parser.set_defaults(mixed_precision=True)
 parser.add_argument('--dropout', type=float, default=0.0)
 
 parser.add_argument('--dt', type=int, default=1, help='time interval (1, 4, or 8)')
-parser.add_argument('--sp_threshold', type=float, default=0.75, help='spike threshold')
+parser.add_argument('--sp_threshold', type=float, default=0.75, help='spike threshold: 0.75 for dt=1, 0.5 for dt=4 or 8')
 
 parser.add_argument('--num_bins', type=int, default=10, help='number of temporal bins for voxel grid')
 
@@ -63,14 +63,18 @@ parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-f
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
 parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
 
-parser.add_argument('--lr', type=int, default=1e-5, choices=[1e-5, 1e-6],
-                    help='learning rate')
-parser.add_argument('--eval_int', type=int, default=3, choices=[3, 1, 1],
+parser.add_argument('--lr', type=float, default=1e-5, help='learning rate')
+parser.add_argument('--eval_int', type=int, default=3,
                     help='evaluation interval: 3 for training from scratch; 1 for domain bridge; 1 for fine tuning')
-parser.add_argument('--max_fail_times', type=int, default=5, choices=[5, 4, 10, 15, 30],
+parser.add_argument('--max_fail_times', type=int, default=5,
                     help='maximum failure times: 5 for training from scratch; 4 for domain bridge; 10 for fine tuning')
-parser.add_argument('--warmup_epochs', type=int, default=3, choices=[3, 3, 0],
+parser.add_argument('--warmup_epochs', type=int, default=3,
                     help='warmup epochs for learning rate scheduler: 3 for training from scratch, 3 for domain bridge; 0 for fine tuning')
+
+parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
+                    help='Host environment to determine dataset paths')
+parser.add_argument('--save_dir', default=None,
+                    help='Directory to save checkpoints (defaults to let_flownet_voxel_dt{dt}_output)')
 
 args = parser.parse_args()
 
@@ -82,7 +86,12 @@ image_resize = 256
 sp_threshold = args.sp_threshold
 div_flow = 1
 
-src_file_dir = '/media/windows_data/code/research/dataset/Event/mvsec/original'
+if args.train_host == 'local':
+    base_dir = '/media/windows_data/code/research'
+else:
+    base_dir = '/scratch/let-flownet'
+
+src_file_dir = f'{base_dir}/dataset/Event/mvsec/original'
 
 train_env = args.train_env
 test_env = args.test_env
@@ -91,9 +100,14 @@ train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
 test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
 test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
 
-uzh_fpv_dataset_path = '/media/windows_data/code/research/dataset/Event/uzh-fpv/data/'
+uzh_fpv_dataset_path = f'{base_dir}/dataset/Event/uzh-fpv/data/'
 
-save_dir = 'let_flownet_voxel_dt1_output'
+if args.save_dir is not None:
+    save_dir = args.save_dir
+elif args.train_host == 'h200':
+    save_dir = f'{base_dir}/outputs/let_flownet_voxel_dt{args.dt}_output'
+else:
+    save_dir = f'let_flownet_voxel_dt{args.dt}_output'
 
 arch = "let_flownet_voxel"
 

@@ -56,3 +56,12 @@ Thumbs.db
 *.mov
 *.wmv
 
+H200/
+
+let-flownet-env-logs/
+
+let-flownet-env-outputs/
+
+design/
+
+training-pipeline.txt
