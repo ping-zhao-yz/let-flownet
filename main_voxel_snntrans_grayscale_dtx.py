@@ -71,6 +71,9 @@ parser.add_argument('--max_fail_times', type=int, default=5,
 parser.add_argument('--warmup_epochs', type=int, default=3,
                     help='warmup epochs for learning rate scheduler: 3 for training from scratch, 3 for domain bridge; 0 for fine tuning')
 
+parser.add_argument('--save_thred', type=float, default=1.05,
+                    help='threshold for saving the checkpoint')
+
 parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
                     help='Host environment to determine dataset paths')
 parser.add_argument('--save_dir', default=None,
@@ -562,8 +565,22 @@ def main():
             if best_EPE < 0:
                 best_EPE = EPE
 
+            is_best = EPE < best_EPE
+            best_EPE = min(EPE, best_EPE)
+
+            if EPE < args.save_thred:
+                filename = f'checkpoint_epoch_{epoch + 1}_{EPE}.pth.tar'
+                save_checkpoint({
+                    'epoch': epoch + 1,
+                    'arch': arch,
+                    'state_dict': model.module.state_dict(),
+                    'best_EPE': best_EPE,
+                    'div_flow': div_flow,
+                    'num_bins': args.num_bins
+                }, is_best, save_path, filename=filename)
+
             # check if exit criteria is met
-            if EPE < best_EPE:
+            if is_best:
                 val_fail_times = 0
             else:
                 val_fail_times += 1
@@ -582,18 +599,6 @@ def main():
                             epoch, val_fail_times
                         )
                     )
-
-            is_best = EPE < best_EPE
-            best_EPE = min(EPE, best_EPE)
-
-            filename = f'checkpoint_epoch_{epoch + 1}_{EPE}.pth.tar'
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': arch,
-                'state_dict': model.module.state_dict(),
-                'best_EPE': best_EPE,
-                'div_flow': div_flow
-            }, is_best, save_path, filename=filename)
 
 
 if __name__ == '__main__':
