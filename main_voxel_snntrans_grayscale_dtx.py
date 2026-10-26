@@ -71,8 +71,8 @@ parser.add_argument('--max_fail_times', type=int, default=5,
 parser.add_argument('--warmup_epochs', type=int, default=3,
                     help='warmup epochs for learning rate scheduler: 3 for training from scratch, 3 for domain bridge; 0 for fine tuning')
 
-parser.add_argument('--save_thred', type=float, default=1.05,
-                    help='threshold for saving the checkpoint')
+parser.add_argument('--save_thred', type=float, default=10.0,
+                    help='threshold for saving intermediate epoch checkpoints (default: 10.0; model_best is always saved)')
 
 parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
                     help='Host environment to determine dataset paths')
@@ -564,20 +564,30 @@ def main():
 
             if best_EPE < 0:
                 best_EPE = EPE
+                is_best = True
+            else:
+                is_best = EPE < best_EPE
+                best_EPE = min(EPE, best_EPE)
 
-            is_best = EPE < best_EPE
-            best_EPE = min(EPE, best_EPE)
+            checkpoint_data = {
+                'epoch': epoch + 1,
+                'arch': arch,
+                'state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
+                'best_EPE': best_EPE,
+                'div_flow': div_flow,
+                'num_bins': args.num_bins
+            }
 
+            # 1. ALWAYS save model_best.pth.tar whenever a new record EPE is achieved!
+            if is_best:
+                save_checkpoint(checkpoint_data, True, save_path, filename=f'checkpoint_best_{EPE:.4f}.pth.tar')
+                print(f"=> [CHECKPOINT] New BEST model achieved (EPE: {EPE:.4f})! Saved to {os.path.join(save_path, 'model_best.pth.tar')}")
+
+            # 2. Archive intermediate epoch checkpoints if EPE is below save_thred
             if EPE < args.save_thred:
-                filename = f'checkpoint_epoch_{epoch + 1}_{EPE}.pth.tar'
-                save_checkpoint({
-                    'epoch': epoch + 1,
-                    'arch': arch,
-                    'state_dict': model.module.state_dict(),
-                    'best_EPE': best_EPE,
-                    'div_flow': div_flow,
-                    'num_bins': args.num_bins
-                }, is_best, save_path, filename=filename)
+                filename = f'checkpoint_epoch_{epoch + 1}_{EPE:.4f}.pth.tar'
+                save_checkpoint(checkpoint_data, False, save_path, filename=filename)
+                print(f"=> [CHECKPOINT] Validation EPE {EPE:.4f} < save_thred {args.save_thred}. Saved {filename}")
 
             # check if exit criteria is met
             if is_best:
