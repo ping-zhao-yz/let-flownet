@@ -57,14 +57,16 @@ parser.add_argument('--sp_threshold', type=float, default=0.75, choices=[0.75, 0
                     help='spike threshold: 0.75 for dt=1, 0.5 for dt=4 or 8')
 
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
-parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
+parser.add_argument('--test_env', default='indoor_flying1',
+                    help='test env (can be comma-separated, e.g. indoor_flying1,indoor_flying2,indoor_flying3)')
 
 parser.add_argument('--lr', type=float, default=1e-5, help='learning rate')
 parser.add_argument('--warmup_epochs', type=int, default=3, help='warmup epochs for learning rate scheduler')
 parser.add_argument('--eval_int', type=int, default=3, help='evaluation interval')
 parser.add_argument('--max_fail_times', type=int, default=5, help='maximum failure times')
 
-parser.add_argument('--save_thred', type=float, default=1.05, help='threashold for saving the checkpoint')
+parser.add_argument('--save_thred', type=float, default=10.0,
+                    help='threshold for saving intermediate epoch checkpoints (default: 10.0; model_best is always saved)')
 
 parser.add_argument('--train_host', default='local', choices=['local', 'h200'],
                     help='Host environment to determine dataset paths')
@@ -91,11 +93,15 @@ train_env = args.train_env
 test_env = args.test_env
 
 train_dir = os.path.join(dataset_dir, train_env)
-test_dir = os.path.join(dataset_dir, test_env)
-
 train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
-test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
-test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
+
+test_envs = [env.strip() for env in test_env.split(',')]
+test_file_pairs = []
+for t_env in test_envs:
+    t_dir = os.path.join(dataset_dir, t_env)
+    t_src_file = f'{src_file_dir}/{t_env}/{t_env}_data.hdf5'
+    t_gt_file = f'{src_file_dir}/{t_env}/{t_env}_gt.hdf5'
+    test_file_pairs.append((t_src_file, t_gt_file, t_dir, t_env))
 
 save_dir = f'{base_dir}/outputs/let_flownet_evtcount_dt{args.dt}_output'
 
@@ -187,14 +193,14 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     return losses.avg
 
 
-def validate(test_loader, model, epoch, output_writers):
+def validate(test_loader, model, epoch, output_writers, current_test_src_file, current_test_gt_file, current_test_env):
     global args, image_resize, sp_threshold
-    d_label = h5py.File(test_gt_file, 'r')
+    d_label = h5py.File(current_test_gt_file, 'r')
     gt_temp = np.float32(d_label['davis']['left']['flow_dist'])
     gt_ts_temp = np.float64(d_label['davis']['left']['flow_dist_ts'])
     d_label = None
 
-    d_set = h5py.File(test_src_file, 'r')
+    d_set = h5py.File(current_test_src_file, 'r')
     gray_image = d_set['davis']['left']['image_raw']
 
     # switch to evaluate mode
@@ -215,7 +221,7 @@ def validate(test_loader, model, epoch, output_writers):
         former_inputs_on, former_inputs_off, latter_inputs_on, latter_inputs_off, ts_f, ts_l = data
 
         # Only for outdoor_day1, limit to 800 frames to match Spike-FlowNet
-        if 'outdoor_day1' in test_env and i_batch >= 800:
+        if 'outdoor_day1' in current_test_env and i_batch >= 800:
             break
 
         if torch.sum(former_inputs_on + former_inputs_off) > 0:
@@ -315,7 +321,7 @@ def validate(test_loader, model, epoch, output_writers):
 
             gt_flow = gt_flow[yoff: -yoff, xoff: -xoff, :]
 
-            is_car_flag = 'outdoor' in test_env
+            is_car_flag = 'outdoor' in current_test_env
 
             AEE, percent_Outlier, n_points, AEE_sum_temp, AEE_gt, AEE_sum_temp_gt = flow_error_dense(
                 gt_flow, pred_flow, (torch.sum(torch.sum(torch.sum(event_data, dim=0), dim=0), dim=2)).cpu(), is_car=is_car_flag)
@@ -344,7 +350,9 @@ def validate(test_loader, model, epoch, output_writers):
                 print('Mean AEE: {:.3f}, sum AEE: {:.2f}, Mean AEE_gt: {:.2f}, sum AEE_gt: {:.2f}, Mean %Outlier: {:.3f}, # pts: {:.2f}'
                     .format(AEE_sum / iters, AEE_sum_sum / iters, AEE_sum_gt / iters, AEE_sum_sum_gt / iters, percent_Outlier_sum / iters, n_points))
 
-    print('================ Overall Validation Outcome ===================')
+    seq_name = os.path.basename(current_test_src_file).replace('_data.hdf5', '')
+
+    print(f'================ Validation Outcome: {seq_name} ===================')
     print(f'Time: {now}, epoch: {epoch}')
     print('Mean AEE: {:.3f}, sum AEE: {:.2f}, Mean AEE_gt: {:.2f}, sum AEE_gt: {:.2f}, Mean %Outlier: {:.3f}, # Mean pts: {:.2f}'
         .format(AEE_sum / iters, AEE_sum_sum / iters, AEE_sum_gt / iters, AEE_sum_sum_gt / iters, percent_Outlier_sum / iters, total_points / iters))
@@ -383,9 +391,21 @@ def main():
     val_fail_times_max = 8
     val_fail_times = 0
 
-    d_label = h5py.File(test_gt_file, 'r')
-    gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
-    d_label.close()
+    test_loaders = []
+    for t_src, t_gt, t_dir, t_env in test_file_pairs:
+        with h5py.File(t_gt, 'r') as d_label:
+            gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
+
+        t_dataset = DatasetTest(args.dt, t_src, t_dir, gt_start_time=gt_start)
+        t_loader = DataLoader(
+            dataset=t_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=workers
+        )
+        test_loaders.append((t_loader, t_src, t_gt, t_dir, t_env))
+
+    print(f"=> Created {len(test_loaders)} validation loader(s).")
 
     save_path = '{},bat{},lr{},bin{}'.format(
         arch,
@@ -405,12 +425,6 @@ def main():
     for i in range(3):
         output_writers.append(SummaryWriter(
             os.path.join(save_path, 'test', str(i))))
-
-    test_dataset = DatasetTest(args.dt, test_src_file, test_dir, gt_start_time=gt_start)
-    test_loader = DataLoader(dataset=test_dataset,
-                             batch_size=1,
-                             shuffle=False,
-                             num_workers=workers)
 
     # create model
     if args.pretrained:
@@ -435,7 +449,14 @@ def main():
 
     if args.evaluate:
         with torch.no_grad():
-            best_EPE = validate(test_loader, model, -1, output_writers)
+            total_EPE = 0
+            for t_loader, t_src, t_gt, t_dir, t_env in test_loaders:
+                total_EPE += validate(t_loader, model, -1, output_writers, t_src, t_gt, t_env)
+            mean_EPE = total_EPE / len(test_loaders)
+            if len(test_loaders) > 1:
+                print(f'================ Overall Validation Outcome ===================')
+                print(f'Mean AEE across all {len(test_loaders)} sequences: {mean_EPE:.3f}')
+                print('=============================================================')
         return
 
     assert (args.solver in ['adam', 'sgd'])
@@ -532,25 +553,44 @@ def main():
         if (epoch + 1) % args.eval_int == 0:
             # evaluate on validation set
             with torch.no_grad():
-                EPE = validate(test_loader, model, epoch, output_writers)
+                total_EPE = 0
+                for t_loader, t_src, t_gt, t_dir, t_env in test_loaders:
+                    total_EPE += validate(t_loader, model, epoch, output_writers, t_src, t_gt, t_env)
+                EPE = total_EPE / len(test_loaders)
+
+            if len(test_loaders) > 1:
+                print(f'================ Overall Validation Outcome (Epoch {epoch}) ===================')
+                print(f'Mean AEE across all {len(test_loaders)} sequences: {EPE:.3f}')
+                print('=============================================================')
+
             test_writer.add_scalar('mean_val_EPE', EPE, epoch)
 
             if best_EPE < 0:
                 best_EPE = EPE
+                is_best = True
+            else:
+                is_best = EPE < best_EPE
+                best_EPE = min(EPE, best_EPE)
 
-            is_best = EPE < best_EPE
-            best_EPE = min(EPE, best_EPE)
+            checkpoint_data = {
+                'epoch': epoch + 1,
+                'arch': arch,
+                'state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
+                'best_EPE': best_EPE,
+                'div_flow': div_flow,
+                'num_bins': args.num_bins
+            }
 
+            # 1. ALWAYS save model_best.pth.tar whenever a new record EPE is achieved!
+            if is_best:
+                save_checkpoint(checkpoint_data, True, save_path, filename=f'checkpoint_best_{EPE:.4f}.pth.tar')
+                print(f"=> [CHECKPOINT] New BEST model achieved (EPE: {EPE:.4f})! Saved to {os.path.join(save_path, 'model_best.pth.tar')}")
+
+            # 2. Archive intermediate epoch checkpoints if EPE is below save_thred
             if EPE < args.save_thred:
-                filename = f'checkpoint_epoch_{epoch + 1}_{EPE}.pth.tar'
-                save_checkpoint({
-                    'epoch': epoch + 1,
-                    'arch': arch,
-                    'state_dict': model.module.state_dict(),
-                    'best_EPE': best_EPE,
-                    'div_flow': div_flow,
-                    'num_bins': args.num_bins
-                }, is_best, save_path, filename=filename)
+                filename = f'checkpoint_epoch_{epoch + 1}_{EPE:.4f}.pth.tar'
+                save_checkpoint(checkpoint_data, False, save_path, filename=filename)
+                print(f"=> [CHECKPOINT] Validation EPE {EPE:.4f} < save_thred {args.save_thred}. Saved {filename}")
 
             # check if exit criteria is met
             if is_best:
