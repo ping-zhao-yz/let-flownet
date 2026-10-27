@@ -61,7 +61,8 @@ parser.add_argument('--train_dataset', default='mvsec', choices=['mvsec', 'uzh-f
                     help='dataset for training')
 
 parser.add_argument('--train_env', default='outdoor_day2', help='train env (outdoor_day1 or outdoor_day2)')
-parser.add_argument('--test_env', default='indoor_flying1', help='test env (indoor_flying1, indoor_flying2, or indoor_flying3)')
+parser.add_argument('--test_env', default='indoor_flying1',
+                    help='test env (can be comma-separated, e.g. indoor_flying1,indoor_flying2,indoor_flying3)')
 
 parser.add_argument('--lr', type=float, default=1e-5, help='learning rate')
 parser.add_argument('--eval_int', type=int, default=3,
@@ -100,8 +101,12 @@ train_env = args.train_env
 test_env = args.test_env
 
 train_src_file = src_file_dir + '/' + train_env + '/' + train_env + "_data.hdf5"
-test_src_file = src_file_dir + '/' + test_env + '/' + test_env + "_data.hdf5"
-test_gt_file = src_file_dir + '/' + test_env + '/' + test_env + "_gt.hdf5"
+test_envs = [env.strip() for env in test_env.split(',')]
+test_file_pairs = []
+for t_env in test_envs:
+    t_src_file = f'{src_file_dir}/{t_env}/{t_env}_data.hdf5'
+    t_gt_file = f'{src_file_dir}/{t_env}/{t_env}_gt.hdf5'
+    test_file_pairs.append((t_src_file, t_gt_file, t_env))
 
 uzh_fpv_dataset_path = f'{base_dir}/dataset/Event/uzh-fpv/data/'
 
@@ -203,14 +208,14 @@ def train(train_loader, model, optimizer, epoch, train_writer, scaler):
     return losses.avg
 
 
-def validate(test_loader, model, epoch, output_writers):
+def validate(test_loader, model, epoch, output_writers, current_test_src_file, current_test_gt_file, current_test_env):
     global args, image_resize, sp_threshold
-    d_label = h5py.File(test_gt_file, 'r')
+    d_label = h5py.File(current_test_gt_file, 'r')
     gt_temp = np.float32(d_label['davis']['left']['flow_dist'])
     gt_ts_temp = np.float64(d_label['davis']['left']['flow_dist_ts'])
     d_label = None
 
-    d_set = h5py.File(test_src_file, 'r')
+    d_set = h5py.File(current_test_src_file, 'r')
     gray_image = d_set['davis']['left']['image_raw']
 
     # switch to evaluate mode
@@ -231,7 +236,7 @@ def validate(test_loader, model, epoch, output_writers):
         voxel_tensor, ts_f, ts_l = data
 
         # Only for outdoor_day1, limit to 800 frames to match Spike-FlowNet
-        if 'outdoor_day1' in test_env and i_batch >= 800:
+        if 'outdoor_day1' in current_test_env and i_batch >= 800:
             break
 
         # check if there are any non-zero elements
@@ -329,7 +334,7 @@ def validate(test_loader, model, epoch, output_writers):
 
             gt_flow = gt_flow[yoff: -yoff, xoff: -xoff, :]
 
-            is_car_flag = 'outdoor' in test_env
+            is_car_flag = 'outdoor' in current_test_env
 
             AEE, percent_Outlier, n_points, AEE_sum_temp, AEE_gt, AEE_sum_temp_gt = flow_error_dense(
                 gt_flow, pred_flow, mask_tensor, is_car=is_car_flag)
@@ -358,7 +363,9 @@ def validate(test_loader, model, epoch, output_writers):
                 print('Mean AEE: {:.3f}, sum AEE: {:.2f}, Mean AEE_gt: {:.2f}, sum AEE_gt: {:.2f}, Mean %Outlier: {:.3f}, # pts: {:.2f}'
                     .format(AEE_sum / iters, AEE_sum_sum / iters, AEE_sum_gt / iters, AEE_sum_sum_gt / iters, percent_Outlier_sum / iters, n_points))
 
-    print('================ Overall Validation Outcome ===================')
+    seq_name = os.path.basename(current_test_src_file).replace('_data.hdf5', '')
+
+    print(f'================ Validation Outcome: {seq_name} ===================')
     print(f'Time: {now}, epoch: {epoch}')
     print('Mean AEE: {:.3f}, sum AEE: {:.2f}, Mean AEE_gt: {:.2f}, sum AEE_gt: {:.2f}, Mean %Outlier: {:.3f}, # Mean pts: {:.2f}'
         .format(AEE_sum / iters, AEE_sum_sum / iters, AEE_sum_gt / iters, AEE_sum_sum_gt / iters, percent_Outlier_sum / iters, total_points / iters))
@@ -374,9 +381,25 @@ def main():
     best_EPE = -1
     val_fail_times = 0
 
-    d_label = h5py.File(test_gt_file, 'r')
-    gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
-    d_label.close()
+    test_loaders = []
+    for t_src, t_gt, t_env in test_file_pairs:
+        with h5py.File(t_gt, 'r') as d_label:
+            gt_start = np.float64(d_label['davis']['left']['flow_dist_ts'])[0]
+            
+        t_dataset = DatasetTest(
+            args.dt, t_src,
+            gt_start_time=gt_start,
+            num_bins=args.num_bins
+        )
+        t_loader = DataLoader(
+            dataset=t_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=workers
+        )
+        test_loaders.append((t_loader, t_src, t_gt, t_env))
+        
+    print(f"=> Created {len(test_loaders)} validation loader(s).")
 
     save_path = '{},{},epochs{},bat{},lr{}'.format(
         arch,
@@ -398,12 +421,6 @@ def main():
         output_writers.append(SummaryWriter(
             os.path.join(save_path, 'test', str(i))))
 
-    test_dataset = DatasetTest(args.dt, test_src_file, gt_start_time=gt_start, num_bins=args.num_bins)
-    test_loader = DataLoader(dataset=test_dataset,
-                             batch_size=1,
-                             shuffle=False,
-                             num_workers=workers)
-
     # create model
     if args.pretrained:
         map_location = None if torch.cuda.is_available() else torch.device('cpu')
@@ -420,7 +437,14 @@ def main():
 
     if args.evaluate:
         with torch.no_grad():
-            best_EPE = validate(test_loader, model, -1, output_writers)
+            total_EPE = 0
+            for t_loader, t_src, t_gt, t_env in test_loaders:
+                total_EPE += validate(t_loader, model, -1, output_writers, t_src, t_gt, t_env)
+            mean_EPE = total_EPE / len(test_loaders)
+            if len(test_loaders) > 1:
+                print(f'================ Overall Validation Outcome ===================')
+                print(f'Mean AEE across all {len(test_loaders)} sequences: {mean_EPE:.3f}')
+                print('=============================================================')
         return
 
     assert (args.solver in ['adam', 'sgd'])
@@ -559,7 +583,16 @@ def main():
         if (epoch + 1) % args.eval_int == 0:
             # evaluate on validation set
             with torch.no_grad():
-                EPE = validate(test_loader, model, epoch, output_writers)
+                total_EPE = 0
+                for t_loader, t_src, t_gt, t_env in test_loaders:
+                    total_EPE += validate(t_loader, model, epoch, output_writers, t_src, t_gt, t_env)
+                EPE = total_EPE / len(test_loaders)
+
+            if len(test_loaders) > 1:
+                print(f'================ Overall Validation Outcome (Epoch {epoch}) ===================')
+                print(f'Mean AEE across all {len(test_loaders)} sequences: {EPE:.3f}')
+                print('=============================================================')
+
             test_writer.add_scalar('mean_val_EPE', EPE, epoch)
 
             if best_EPE < 0:
