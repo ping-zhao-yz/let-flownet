@@ -407,7 +407,7 @@ def main():
 
     print(f"=> Created {len(test_loaders)} validation loader(s).")
 
-    save_path = '{},bat{},lr{},bin{}'.format(
+    save_path = '{},bat{},lr{}'.format(
         arch,
         batch_size,
         args.lr)
