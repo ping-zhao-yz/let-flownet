@@ -400,6 +400,50 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
 
             epe, ae, pe1, pe2, pe3, n_points = flow_error_dense(gt_flow, pred_flow, mask_temp_np, is_car=is_car_flag)
 
+            # =========================================================================
+            # Qualitative Frame Export (for Paper / Thesis Figures)
+            # =========================================================================
+            # Filter criteria: High ground-truth motion AND low prediction error
+            num_valid_events = np.count_nonzero(mask_temp_np)
+            if num_valid_events > 200:
+                gt_magnitude = np.sqrt(gt_flow[:, :, 0]**2 + gt_flow[:, :, 1]**2)
+                mean_gt_motion = np.mean(gt_magnitude[mask_temp_np])
+
+                # Current frame EPE is strictly below 0.7 with significant motion (> 3.0 px)
+                if epe < 0.70 and mean_gt_motion > 3.0:
+                    dump_dir = "./qualitative_hunt"
+                    os.makedirs(dump_dir, exist_ok=True)
+                    seq_name = os.path.basename(current_test_src_file).replace('_data.hdf5', '')
+                    frame_id = int(iters)
+
+                    # 1. Reference Grayscale Image (APS)
+                    gray = cv2.resize(gray_image[i_batch], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
+                    cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_1_APS.png", gray)
+
+                    # 2. Event Surface / Spike Mask
+                    spike_vis = (mask_temp_np.astype(np.uint8) * 255)
+                    spike_vis = cv2.resize(spike_vis, (vis_resolution, vis_resolution), interpolation=cv2.INTER_NEAREST)
+                    cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_2_Events.png", spike_vis)
+
+                    # 3. Ground Truth Flow (Masked & Full)
+                    gt_x = cv2.resize(gt_flow[:, :, 0], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
+                    gt_y = cv2.resize(gt_flow[:, :, 1], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
+                    gt_flow_bgr = flow_viz_np(gt_x, gt_y)
+                    cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_3_GT.png", gt_flow_bgr)
+
+                    # Masked GT (standard format for event-vision papers)
+                    mask_resized = cv2.resize(mask_temp_np.astype(np.float32), (vis_resolution, vis_resolution), interpolation=cv2.INTER_NEAREST) > 0.5
+                    gt_masked_bgr = gt_flow_bgr.copy()
+                    gt_masked_bgr[~mask_resized] = 255  # Clean white background outside events
+                    cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_3_GT_masked.png", gt_masked_bgr)
+
+                    # 4. Our Multi-Pass Flow Prediction (Aligned & Scaled)
+                    pred_x = cv2.resize(pred_flow[:, :, 0], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
+                    pred_y = cv2.resize(pred_flow[:, :, 1], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
+                    pred_flow_bgr = flow_viz_np(pred_x, pred_y)
+                    cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_4_Ours_EPE{epe:.2f}.png", pred_flow_bgr)
+            # =========================================================================
+
             epe_sum += epe
             ae_sum += ae
             pe1_sum += pe1
