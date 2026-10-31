@@ -413,6 +413,9 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
             # Qualitative Frame Export (for Paper / Thesis Figures)
             # =========================================================================
             if args.export_visuals:
+                if i_batch == 0:
+                    print(f"=> [VISUAL EXPORT] Export active. Target dir: '{args.export_dir}' | Thresholds: EPE < {args.export_epe_thresh:.2f}, Motion > {args.export_motion_thresh:.2f} px")
+
                 # Filter criteria: High ground-truth motion AND low prediction error
                 num_valid_events = np.count_nonzero(mask_temp_np)
                 if num_valid_events > 200:
@@ -452,6 +455,20 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
                         pred_y = cv2.resize(pred_flow[:, :, 1], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
                         pred_flow_bgr = flow_viz_np(pred_x, pred_y)
                         cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_4_Ours_EPE{epe:.2f}.png", pred_flow_bgr)
+
+                        print(f"=> [VISUAL EXPORT] SAVED frame {frame_id:04d} from {seq_name} (EPE: {epe:.3f} < {args.export_epe_thresh}, Motion: {mean_gt_motion:.2f} > {args.export_motion_thresh} px, Events: {num_valid_events:,}) -> {dump_dir}/")
+                    else:
+                        # Troubleshooting debug logs: first 5 frames, then every 50 frames
+                        if i_batch < 5 or i_batch % 50 == 0:
+                            reasons = []
+                            if epe >= args.export_epe_thresh:
+                                reasons.append(f"EPE {epe:.3f} >= {args.export_epe_thresh}")
+                            if mean_gt_motion <= args.export_motion_thresh:
+                                reasons.append(f"Motion {mean_gt_motion:.2f} <= {args.export_motion_thresh} px")
+                            print(f"=> [VISUAL EXPORT DEBUG] Frame {int(iters):04d} skipped: {', '.join(reasons)} (Events: {num_valid_events:,})")
+                else:
+                    if i_batch < 5 or i_batch % 50 == 0:
+                        print(f"=> [VISUAL EXPORT DEBUG] Frame {int(iters):04d} skipped: insufficient events ({num_valid_events} <= 200)")
             # =========================================================================
 
             epe_sum += epe
