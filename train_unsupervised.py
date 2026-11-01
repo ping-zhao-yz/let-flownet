@@ -19,7 +19,7 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
 from util.loss_util import AverageMeter
-from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint
+from util.flow_util import flow2rgb, flow_viz_np, save_checkpoint, flow_to_middlebury, events_to_bgr
 
 from datasets.voxel.dataset_unsupervised import DatasetTest, DatasetTrain
 from models import let_flownet_voxel
@@ -337,8 +337,9 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
             gt_flow = np.stack((u_gt, v_gt), axis=2)
 
             # Mask derivation for Metric Calculation & Visualization
-            mask_tensor = torch.sum((event_data[0] != 0).float(), dim=(0, 3)).cpu()
-            mask_temp_np = mask_tensor.numpy() > 0
+            pos_mask_np = (torch.sum(event_data[0, 0] != 0, dim=-1).cpu().numpy() > 0)
+            neg_mask_np = (torch.sum(event_data[0, 1] != 0, dim=-1).cpu().numpy() > 0)
+            mask_temp_np = np.logical_or(pos_mask_np, neg_mask_np)
 
             #   ----------- Visualization
             if epoch < 0 and not torch.cuda.is_available():
@@ -433,12 +434,13 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
                         gray = cv2.resize(gray_image[i_batch], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
                         cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_1_APS.png", gray)
 
-                        # 2. Event Surface / Spike Mask
-                        spike_vis = (mask_temp_np.astype(np.uint8) * 255)
-                        spike_vis = cv2.resize(spike_vis, (vis_resolution, vis_resolution), interpolation=cv2.INTER_NEAREST)
-                        cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_2_Events.png", spike_vis)
+                        # 2. Event Surface: Bipolar Red/Blue on White background (matching Figure 3)
+                        pos_mask_res = cv2.resize(pos_mask_np.astype(np.float32), (vis_resolution, vis_resolution), interpolation=cv2.INTER_NEAREST) > 0.5
+                        neg_mask_res = cv2.resize(neg_mask_np.astype(np.float32), (vis_resolution, vis_resolution), interpolation=cv2.INTER_NEAREST) > 0.5
+                        events_bgr = events_to_bgr(pos_mask_res, neg_mask_res)
+                        cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_2_Events.png", events_bgr)
 
-                        # 3. Ground Truth Flow (Masked & Full)
+                        # 3. Ground Truth Flow (Middlebury Color Wheel, matching Figure 3)
                         gt_x = cv2.resize(gt_flow[:, :, 0], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
                         gt_y = cv2.resize(gt_flow[:, :, 1], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
 
@@ -454,7 +456,7 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
                             max_scale = float(np.max(gt_mag))
                         max_scale = max(max_scale, 1e-3)
 
-                        gt_flow_bgr = flow_viz_np(gt_x, gt_y, max_mag=max_scale)
+                        gt_flow_bgr = flow_to_middlebury(gt_x, gt_y, clip_flow=max_scale)
                         cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_3_GT.png", gt_flow_bgr)
 
                         # Masked GT (standard format for event-vision papers)
@@ -462,10 +464,10 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
                         gt_masked_bgr[~mask_resized] = 255  # Clean white background outside events
                         cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_3_GT_masked.png", gt_masked_bgr)
 
-                        # 4. Our Multi-Pass Flow Prediction (Aligned & Scaled using GT max_mag)
+                        # 4. Our Multi-Pass Flow Prediction (Middlebury Color Wheel, matching Figure 3)
                         pred_x = cv2.resize(pred_flow[:, :, 0], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
                         pred_y = cv2.resize(pred_flow[:, :, 1], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
-                        pred_flow_bgr = flow_viz_np(pred_x, pred_y, max_mag=max_scale)
+                        pred_flow_bgr = flow_to_middlebury(pred_x, pred_y, clip_flow=max_scale)
                         cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_4_Ours_EPE{epe:.2f}.png", pred_flow_bgr)
 
                         # Masked Prediction for direct 1:1 visual comparison with GT_masked
