@@ -12,7 +12,7 @@ Input: flow: [batch_size, width, height, 2]
 Output: flow_rgb: [batch_size, width, height, 3]
 """
 
-def flow_viz_np(flow_x, flow_y):
+def flow_viz_np(flow_x, flow_y, max_mag=None):
     flows = np.stack((flow_x, flow_y), axis=2)
     mag = np.linalg.norm(flows, axis=2)
 
@@ -23,7 +23,10 @@ def flow_viz_np(flow_x, flow_y):
     hsv = np.zeros([flow_x.shape[0], flow_x.shape[1], 3], dtype=np.uint8)
     hsv[:, :, 0] = ang
     hsv[:, :, 1] = 255
-    hsv[:, :, 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+    if max_mag is not None and max_mag > 0:
+        hsv[:, :, 2] = np.clip((mag / max_mag) * 255.0, 0, 255).astype(np.uint8)
+    else:
+        hsv[:, :, 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
     flow_rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
     return flow_rgb
 

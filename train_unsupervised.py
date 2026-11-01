@@ -441,20 +441,37 @@ def validate(test_loader, model, epoch, output_writers, current_test_src_file, c
                         # 3. Ground Truth Flow (Masked & Full)
                         gt_x = cv2.resize(gt_flow[:, :, 0], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
                         gt_y = cv2.resize(gt_flow[:, :, 1], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
-                        gt_flow_bgr = flow_viz_np(gt_x, gt_y)
+
+                        mask_resized = cv2.resize(mask_temp_np.astype(np.float32), (vis_resolution, vis_resolution), interpolation=cv2.INTER_NEAREST) > 0.5
+
+                        # Calculate common maximum magnitude scale from GT to lock color wheel scaling
+                        gt_mag = np.sqrt(gt_x**2 + gt_y**2)
+                        if np.any(mask_resized):
+                            max_scale = float(np.percentile(gt_mag[mask_resized], 99.5))
+                            if max_scale <= 1e-3:
+                                max_scale = float(np.max(gt_mag))
+                        else:
+                            max_scale = float(np.max(gt_mag))
+                        max_scale = max(max_scale, 1e-3)
+
+                        gt_flow_bgr = flow_viz_np(gt_x, gt_y, max_mag=max_scale)
                         cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_3_GT.png", gt_flow_bgr)
 
                         # Masked GT (standard format for event-vision papers)
-                        mask_resized = cv2.resize(mask_temp_np.astype(np.float32), (vis_resolution, vis_resolution), interpolation=cv2.INTER_NEAREST) > 0.5
                         gt_masked_bgr = gt_flow_bgr.copy()
                         gt_masked_bgr[~mask_resized] = 255  # Clean white background outside events
                         cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_3_GT_masked.png", gt_masked_bgr)
 
-                        # 4. Our Multi-Pass Flow Prediction (Aligned & Scaled)
+                        # 4. Our Multi-Pass Flow Prediction (Aligned & Scaled using GT max_mag)
                         pred_x = cv2.resize(pred_flow[:, :, 0], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
                         pred_y = cv2.resize(pred_flow[:, :, 1], (vis_resolution, vis_resolution), interpolation=cv2.INTER_LINEAR)
-                        pred_flow_bgr = flow_viz_np(pred_x, pred_y)
+                        pred_flow_bgr = flow_viz_np(pred_x, pred_y, max_mag=max_scale)
                         cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_4_Ours_EPE{epe:.2f}.png", pred_flow_bgr)
+
+                        # Masked Prediction for direct 1:1 visual comparison with GT_masked
+                        pred_masked_bgr = pred_flow_bgr.copy()
+                        pred_masked_bgr[~mask_resized] = 255  # Clean white background outside events
+                        cv2.imwrite(f"{dump_dir}/{seq_name}_f{frame_id:04d}_4_Ours_masked_EPE{epe:.2f}.png", pred_masked_bgr)
 
                         print(f"=> [VISUAL EXPORT] SAVED frame {frame_id:04d} from {seq_name} (EPE: {epe:.3f} < {args.export_epe_thresh}, Motion: {mean_gt_motion:.2f} > {args.export_motion_thresh} px, Events: {num_valid_events:,}) -> {dump_dir}/")
                     else:
