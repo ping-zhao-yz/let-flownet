@@ -86,7 +86,7 @@ if args.train_host == 'local':
 else:
     base_dir = '/scratch/let-flownet'
 
-dataset_dir = f'{base_dir}/dataset/Event/mvsec/preprocessed'
+dataset_dir = '/media/usb/mvsec/preprocessed'
 src_file_dir = f'{base_dir}/dataset/Event/mvsec/original'
 
 train_env = args.train_env
