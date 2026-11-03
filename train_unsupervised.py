@@ -61,7 +61,7 @@ parser.set_defaults(mixed_precision=True)
 parser.add_argument('--dropout', type=float, default=0.0)
 
 parser.add_argument('--dt', type=int, default=1, help='time interval (1, 4, or 8)')
-parser.add_argument('--sp_threshold', type=float, default=0.75, choices=[0.75, 0.5],
+parser.add_argument('--sp_threshold', type=float, default=0.75,
                     help='spike threshold: 0.75 for dt=1, 0.5 for dt=4 or 8')
 
 parser.add_argument('--num_bins', type=int, default=10, help='number of temporal bins for voxel grid')
